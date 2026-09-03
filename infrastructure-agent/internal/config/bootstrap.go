@@ -6,7 +6,6 @@ import (
     "fmt"
     "os"
     "path/filepath"
-    "runtime"
     "strconv"
     "strings"
 
@@ -41,15 +40,7 @@ func ConfigureFromEnv(configPath string) (Config, error) {
         dataDir = existing.DataDir
     }
     if dataDir == "" {
-        if runtime.GOOS == "windows" {
-            base := os.Getenv("ProgramData")
-            if base == "" {
-                base = configDir
-            }
-            dataDir = filepath.Join(base, "InfrastructureAgent", "data")
-        } else {
-            dataDir = "/var/lib/infrastructure-agent"
-        }
+        dataDir = DefaultDataDir()
     }
 
     secretDir := filepath.Join(configDir, "secrets")
