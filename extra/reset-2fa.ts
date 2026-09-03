@@ -56,12 +56,11 @@ export async function main() {
             [ user.id ],
         );
 
-        // Rotating the instance JWT secret guarantees that every currently
-        // issued web session is rejected, including sessions from other users.
-        await server.initJWTSecret();
-
+        // auth_revision invalidates this user's existing JWTs without rotating
+        // the instance key used to protect encrypted TOTP secrets belonging to
+        // other users/future accounts.
         console.log("\n✓ 2FA removido localmente.");
-        console.log("✓ Sessões existentes invalidadas.");
+        console.log("✓ Sessões existentes desta conta invalidadas.");
         console.log("Reinicie/recarregue a instância e entre novamente com usuário e senha.");
     } catch (error) {
         console.error("Erro: " + (error instanceof Error ? error.message : String(error)));
