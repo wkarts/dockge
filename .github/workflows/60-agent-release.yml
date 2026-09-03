@@ -47,7 +47,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-          cache-dependency-path: infrastructure-agent/go.mod
+          cache-dependency-path: infrastructure-agent/go.sum
       - run: go test ./...
       - run: sudo apt-get update && sudo apt-get install -y rpm
       - name: Build e pacotes Linux
@@ -82,9 +82,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-          cache-dependency-path: infrastructure-agent/go.mod
+          cache-dependency-path: infrastructure-agent/go.sum
       - run: go test ./...
-      - name: Build Windows
+      - name: Build Windows amd64/arm64
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -92,15 +92,18 @@ jobs:
           foreach ($arch in @('amd64','arm64')) {
             $env:GOOS = 'windows'; $env:GOARCH = $arch; $env:CGO_ENABLED = '0'
             go build -trimpath -ldflags "-s -w -X github.com/wkarts/infrastructure-agent/internal/version.Version=$env:AGENT_VERSION" -o "dist/bin/infra-agent-windows-$arch.exe" ./cmd/infra-agent
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
       - run: choco install innosetup --yes --no-progress
-      - name: Setup Windows
+      - name: Gerar Setup Windows amd64/arm64
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $iscc = "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw 'ISCC.exe não encontrado' }
           & $iscc "/DMyAppVersion=$env:AGENT_VERSION" "/DMyAppArch=amd64" "/DMySourceDir=dist\bin" packaging/windows/installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $iscc "/DMyAppVersion=$env:AGENT_VERSION" "/DMySourceDir=dist\bin" packaging/windows/installer-arm64.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-FileHash -Algorithm SHA256 dist/bin/*.exe, dist/packages/*.exe | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } | Set-Content dist/SHA256SUMS-windows.txt
       - uses: actions/upload-artifact@v4
@@ -123,7 +126,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-          cache-dependency-path: infrastructure-agent/go.mod
+          cache-dependency-path: infrastructure-agent/go.sum
       - run: go test ./...
       - name: Build e PKG macOS
         shell: bash
