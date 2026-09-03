@@ -9,6 +9,7 @@ import (
     "strconv"
     "strings"
 
+    "github.com/wkarts/infrastructure-agent/internal/atomicfile"
     "github.com/wkarts/infrastructure-agent/internal/securefile"
 )
 
@@ -126,7 +127,13 @@ func ConfigureFromEnv(configPath string) (Config, error) {
         return Config{}, err
     }
     raw = append(raw, '\n')
-    if err := os.WriteFile(configPath, raw, 0640); err != nil {
+
+    tempPath := configPath + ".tmp"
+    if err := os.WriteFile(tempPath, raw, 0640); err != nil {
+        return Config{}, err
+    }
+    if err := atomicfile.Replace(tempPath, configPath); err != nil {
+        _ = os.Remove(tempPath)
         return Config{}, err
     }
     _ = os.Chmod(configPath, 0640)
