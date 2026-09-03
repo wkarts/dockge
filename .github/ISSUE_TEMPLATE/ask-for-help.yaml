@@ -1,14 +1,17 @@
-name: "⚠️ Ask for help (Please go to the \"Discussions\" tab to submit a Help Request)"
-description: "⚠️ Please go to the \"Discussions\" tab to submit a Help Request"
+name: "⚠️ Ajuda / suporte"
+description: "Use Discussions para dúvidas de uso; Issues são destinadas a bugs reproduzíveis."
 body:
   - type: markdown
     attributes:
       value: |
-        ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️  Please go to https://github.com/louislam/dockge/discussions/new?category=ask-for-help
+        Para dúvidas de uso, utilize as Discussions deste projeto quando estiverem habilitadas:
+        https://github.com/wkarts/dockge/discussions
+
+        Para um bug reproduzível, volte e escolha o template de Bug Report.
   - type: checkboxes
-    id: no-duplicate-issues
+    id: understood
     attributes:
-      label: "Issues are for bug reports only, please go to the \"Discussions\" tab to submit a Feature Request"
+      label: "Canal correto"
       options:
-        - label: "I understand"
+        - label: "Entendi que Issues devem conter bugs reproduzíveis"
           required: true
