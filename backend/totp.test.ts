@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createTotpUri, generateTotpSecret, verifyTotp } from "./totp";
+import { protectTotpSecret, revealTotpSecret } from "./totp-secret";
 
 const RFC_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
 
@@ -29,4 +30,16 @@ test("generated secret and otpauth URI are usable", () => {
     assert.ok(uri.startsWith("otpauth://totp/"));
     assert.ok(uri.includes(`secret=${secret}`));
     assert.ok(uri.includes("issuer=Dockge+Test"));
+});
+
+test("TOTP secret is encrypted at rest and decrypts with instance secret", () => {
+    const encrypted = protectTotpSecret(RFC_SECRET, "instance-secret-A");
+    assert.match(encrypted, /^enc:v1:/);
+    assert.equal(encrypted.includes(RFC_SECRET), false);
+    assert.equal(revealTotpSecret(encrypted, "instance-secret-A"), RFC_SECRET);
+    assert.throws(() => revealTotpSecret(encrypted, "instance-secret-B"));
+});
+
+test("historical plaintext TOTP secret remains readable for migration", () => {
+    assert.equal(revealTotpSecret(RFC_SECRET, "instance-secret-A"), RFC_SECRET);
 });
