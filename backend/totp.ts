@@ -36,6 +36,7 @@ function decodeBase32(value: string): Buffer {
 }
 
 function hotp(secret: string, counter: number, digits = 6): string {
+    if (!Number.isSafeInteger(counter) || counter < 0) throw new Error("invalid HOTP counter");
     const key = decodeBase32(secret);
     const msg = Buffer.alloc(8);
     msg.writeBigUInt64BE(BigInt(counter));
@@ -63,11 +64,16 @@ export function verifyTotp(secret: string, token: string, options: VerifyTotpOpt
     const period = options.period ?? 30;
     const window = options.window ?? 1;
     const clean = String(token || "").replace(/\s+/g, "");
+    if (!Number.isInteger(digits) || digits < 6 || digits > 10) return false;
+    if (!Number.isFinite(period) || period <= 0 || !Number.isInteger(window) || window < 0 || window > 10) return false;
     if (!new RegExp(`^\\d{${digits}}$`).test(clean)) return false;
     const now = options.now ?? Date.now();
     const counter = Math.floor(now / 1000 / period);
+    if (counter < 0) return false;
     for (let delta = -window; delta <= window; delta += 1) {
-        if (safeEqual(hotp(secret, counter + delta, digits), clean)) return true;
+        const candidate = counter + delta;
+        if (candidate < 0) continue;
+        if (safeEqual(hotp(secret, candidate, digits), clean)) return true;
     }
     return false;
 }
