@@ -1,22 +1,25 @@
 labels: [feature-request]
 body:
   - type: checkboxes
-    id: no-duplicate-issues
+    id: no-duplicate
     attributes:
-      label: "⚠️ Please verify that this feature request has NOT been suggested before."
-      description: "Search in the issues sections by clicking [HERE](https://github.com/louislam/dockge/discussions/categories/feature-request)"
+      label: "⚠️ Verifique se a proposta já existe."
+      description: "Pesquise nas discussões e Pull Requests de wkarts/dockge."
       options:
-        - label: "I checked and didn't find similar feature request"
+        - label: "Pesquisei e não encontrei proposta equivalente"
           required: true
   - type: dropdown
     id: feature-area
     attributes:
-      label: "🏷️ Feature Request Type"
-      description: "What kind of feature request is this?"
+      label: "🏷️ Área"
       multiple: true
       options:
-        - API
-        - UI Feature
+        - API / Automation
+        - Generic Infrastructure Agent
+        - Docker / Compose
+        - UI / UX
+        - Security
+        - CI / Release / GHCR
         - Other
     validations:
       required: true
@@ -25,30 +28,25 @@ body:
     validations:
       required: true
     attributes:
-      label: "🔖 Feature description"
-      description: "A clear and concise description of what the feature request is."
-      placeholder: "You should add ..."
+      label: "🔖 Proposta"
+      description: "Descreva claramente a capacidade desejada e o problema que ela resolve."
   - type: textarea
     id: solution
     validations:
       required: true
     attributes:
-      label: "✔️ Solution"
-      description: "A clear and concise description of what you want to happen."
-      placeholder: "In my use-case, ..."
+      label: "✔️ Solução sugerida"
+      description: "Explique o comportamento esperado."
   - type: textarea
-    id: alternatives
+    id: security-scope
     validations:
       required: false
     attributes:
-      label: "❓ Alternatives"
-      description: "A clear and concise description of any alternative solutions or features you've considered."
-      placeholder: "I have considered ..."
+      label: "🔐 Impacto de segurança/escopo"
+      description: "Para automação remota, explique scopes, namespace e auditoria necessários."
   - type: textarea
     id: additional-context
     validations:
       required: false
     attributes:
-      label: "📝 Additional Context"
-      description: "Add any other context or screenshots about the feature request here."
-      placeholder: "..."
+      label: "📝 Contexto adicional"
