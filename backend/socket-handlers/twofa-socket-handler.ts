@@ -5,6 +5,7 @@ import { User } from "../models/user";
 import { checkLogin, DockgeSocket, doubleCheckPassword } from "../util-server";
 import { twoFaRateLimiter } from "../rate-limiter";
 import { createTotpUri, generateTotpSecret, verifyTotp } from "../totp";
+import { registerApiTokenHandlers } from "./api-token-socket-handler";
 
 function cleanToken(value: unknown): string {
     return typeof value === "string" ? value.replace(/\s+/g, "") : "";
@@ -22,6 +23,11 @@ async function bumpAuthRevision(userID: number): Promise<void> {
 }
 
 export function registerTwoFAHandlers(socket: DockgeSocket, server: DockgeServer) {
+    // Human-only administration APIs share the authenticated Socket.IO
+    // channel. They never expose their management surface through the
+    // machine-to-machine REST bearer-token endpoint.
+    registerApiTokenHandlers(socket);
+
     socket.on("twoFAStatus", async (callback) => {
         try {
             checkLogin(socket);
