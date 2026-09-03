@@ -4,7 +4,7 @@
             <div class="container-fluid">
                 {{ $root.socketIO.connectionErrorMsg }}
                 <div v-if="$root.socketIO.showReverseProxyGuide">
-                    {{ $t("reverseProxyMsg1") }} <a href="https://github.com/louislam/uptime-kuma/wiki/Reverse-Proxy" target="_blank">{{ $t("reverseProxyMsg2") }}</a>
+                    {{ $t("reverseProxyMsg1") }} <a href="https://github.com/wkarts/dockge/blob/main/docs/REVERSE-PROXY.md" target="_blank" rel="noopener">{{ $t("reverseProxyMsg2") }}</a>
                 </div>
             </div>
         </div>
@@ -16,7 +16,7 @@
                 <span class="fs-4 title">Dockge</span>
             </router-link>
 
-            <a v-if="hasNewVersion" target="_blank" href="https://github.com/louislam/dockge/releases" class="btn btn-warning me-3">
+            <a v-if="hasNewVersion" target="_blank" rel="noopener" href="https://github.com/wkarts/dockge/releases" class="btn btn-warning me-3">
                 <font-awesome-icon icon="arrow-alt-circle-up" /> {{ $t("newUpdate") }}
             </a>
 
@@ -53,13 +53,6 @@
                             <li><hr class="dropdown-divider"></li>
 
                             <!-- Functions -->
-
-                            <!--<li>
-                                <router-link to="/registry" class="dropdown-item" :class="{ active: $route.path.includes('settings') }">
-                                    <font-awesome-icon icon="warehouse" /> {{ $t("registry") }}
-                                </router-link>
-                            </li>-->
-
                             <li>
                                 <button class="dropdown-item" @click="scanFolder">
                                     <font-awesome-icon icon="arrows-rotate" /> {{ $t("scanFolder") }}
@@ -101,20 +94,11 @@ import { compareVersions } from "compare-versions";
 import { ALL_ENDPOINTS } from "../../../common/util-common";
 
 export default {
-
     components: {
         Login,
     },
 
-    data() {
-        return {
-
-        };
-    },
-
     computed: {
-
-        // Theme or Mobile
         classes() {
             const classes = {};
             classes[this.$root.theme] = true;
@@ -125,23 +109,9 @@ export default {
         hasNewVersion() {
             if (this.$root.info.latestVersion && this.$root.info.version) {
                 return compareVersions(this.$root.info.latestVersion, this.$root.info.version) >= 1;
-            } else {
-                return false;
             }
+            return false;
         },
-
-    },
-
-    watch: {
-
-    },
-
-    mounted() {
-
-    },
-
-    beforeUnmount() {
-
     },
 
     methods: {
@@ -151,7 +121,6 @@ export default {
             });
         },
     },
-
 };
 </script>
 
@@ -220,7 +189,6 @@ main {
     z-index: 99999;
 }
 
-// Profile Pic Button with Dropdown
 .dropdown-profile-pic {
     user-select: none;
 
