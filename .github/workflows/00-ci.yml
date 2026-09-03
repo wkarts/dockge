@@ -27,6 +27,7 @@ jobs:
       - run: npm ci
       - run: npm run check-ts
       - run: npm run lint
+      - run: npm run test:security
       - run: npm run build:frontend
       - name: Validar contrato API-first
         run: |
@@ -36,6 +37,8 @@ jobs:
           test -s deploy/compose.api-first.yaml
           grep -q '/api/v1/automation' backend/routers/api-v1-router.ts
           grep -q 'new ApiV1Router' backend/routers/main-router.ts
+          test -s backend/totp.ts
+          test -s backend/socket-handlers/twofa-socket-handler.ts
       - name: Garantir independência operacional
         shell: bash
         run: |
