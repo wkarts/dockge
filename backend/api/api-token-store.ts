@@ -47,6 +47,10 @@ export function normalizeHash(value: string): string {
     return value.trim().toLowerCase().replace(/^sha256:/, "");
 }
 
+export function tokenRecordID(record: ApiTokenRecord): string {
+    return record.id || `legacy-${normalizeHash(record.sha256).slice(0, 24)}`;
+}
+
 export function readTokenFile(): TokenFile {
     const file = tokenFilePath();
     if (!fs.existsSync(file)) return { version: 1, tokens: [] };
@@ -68,7 +72,8 @@ export function writeTokenFile(value: TokenFile): void {
 
 export function publicTokenRecord(record: ApiTokenRecord) {
     return {
-        id: record.id || null,
+        id: tokenRecordID(record),
+        legacy: !record.id,
         name: record.name,
         scopes: record.scopes || [],
         stackPrefixes: record.stackPrefixes || [],
