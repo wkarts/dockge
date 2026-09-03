@@ -14,6 +14,7 @@ trap 'rm -rf "$TOP"' EXIT
 mkdir -p "$TOP"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 cp "dist/bin/infra-agent-linux-$ARCH" "$TOP/SOURCES/infra-agent"
 cp scripts/install.sh "$TOP/SOURCES/infra-agent-installer"
+cp scripts/bootstrap-host.sh "$TOP/SOURCES/bootstrap-host.sh"
 cp examples/agent.json "$TOP/SOURCES/agent.json.example"
 cp packaging/systemd/infrastructure-agent.service "$TOP/SOURCES/"
 cp packaging/rpm/infrastructure-agent.spec "$TOP/SPECS/"
