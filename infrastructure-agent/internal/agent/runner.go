@@ -34,8 +34,36 @@ func allowed(name string, prefixes []string) bool {
     return false
 }
 
+func readOptionalCredential(path string) string {
+    if strings.TrimSpace(path) == "" {
+        return ""
+    }
+    credential, _ := securefile.Read(path)
+    return credential
+}
+
+func (r Runner) dockgeCredentialFor(ctl config.Controller) (string, error) {
+    path := ctl.DockgeCredentialFile
+    if path == "" {
+        path = r.Config.Dockge.CredentialFile
+    }
+    if path == "" {
+        return "", errors.New("no Dockge credential configured for this controller")
+    }
+    return securefile.Read(path)
+}
+
 func (r Runner) inventory() model.Inventory {
-    credential, _ := securefile.Read(r.Config.Dockge.CredentialFile)
+    credential := ""
+    for _, ctl := range r.Config.Controllers {
+        if value := readOptionalCredential(ctl.DockgeCredentialFile); value != "" {
+            credential = value
+            break
+        }
+    }
+    if credential == "" {
+        credential = readOptionalCredential(r.Config.Dockge.CredentialFile)
+    }
     return inventory.Collect(r.Config.Labels, r.Config.Dockge.BaseURL, credential)
 }
 
@@ -109,7 +137,7 @@ func (r Runner) execute(ctx context.Context, ctl config.Controller, action model
         return result
     }
 
-    credential, err := securefile.Read(r.Config.Dockge.CredentialFile)
+    credential, err := r.dockgeCredentialFor(ctl)
     if err != nil {
         result.Message = "dockge credential unavailable: " + err.Error()
         return result
