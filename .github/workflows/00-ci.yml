@@ -1,0 +1,38 @@
+name: 00 · CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dockge-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run check-ts
+      - run: npm run lint
+      - run: npm run build:frontend
+      - name: Validar contrato API-first
+        run: |
+          test -s VERSION
+          test -s backend/api/api-token-auth.ts
+          test -s backend/routers/api-v1-router.ts
+          test -s deploy/compose.api-first.yaml
+          grep -q '/api/v1/automation' backend/routers/api-v1-router.ts
+          grep -q 'new ApiV1Router' backend/routers/main-router.ts
