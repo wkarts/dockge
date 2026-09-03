@@ -1,34 +1,51 @@
-⚠️⚠️⚠️ Since we do not accept all types of pull requests and do not want to waste your time. Please be sure that you have read pull request rules:
-https://github.com/louislam/dockge/blob/master/CONTRIBUTING.md
+# Descrição
 
-Tick the checkbox if you understand [x]: 
-- [ ] I have read and understand the pull request rules.
-
-# Description
+Explique o problema, a solução e o impacto esperado.
 
 Fixes #(issue)
 
-## Type of change
+## Destino
 
-Please delete any options that are not relevant.
+- [ ] Esta PR tem `develop` como base para integração/homologação.
+- [ ] Se esta PR promove `develop -> main`, ela representa uma promoção de release estável.
+- [ ] Não tem `master` como destino; `master` é legado congelado.
 
-- Bug fix (non-breaking change which fixes an issue)
-- User interface (UI)
-- New feature (non-breaking change which adds functionality)
-- Breaking change (fix or feature that would cause existing functionality to not work as expected)
-- Other
-- This change requires a documentation update
+## Tipo de mudança
 
-## Checklist
+- [ ] `feat` — nova capacidade
+- [ ] `fix` — correção
+- [ ] `refactor` — refatoração sem mudança funcional
+- [ ] `docs` — documentação
+- [ ] `ci` — CI/CD
+- [ ] `chore` — manutenção
+- [ ] `test` — testes
+- [ ] `perf` — desempenho
+- [ ] breaking change
 
-- [ ] My code follows the style guidelines of this project
-- [ ] I ran ESLint and other linters for modified files
-- [ ] I have performed a self-review of my own code and tested it
-- [ ] I have commented my code, particularly in hard-to-understand areas
-  (including JSDoc for methods)
-- [ ] My changes generate no new warnings
-- [ ] My code needed automated testing. I have added them (this is optional task)
+## Checklist técnico
 
-## Screenshots (if any)
+- [ ] Li `CONTRIBUTING.md`.
+- [ ] Executei/validei TypeScript, lint e build aplicáveis.
+- [ ] Adicionei testes quando a alteração possui comportamento testável.
+- [ ] Atualizei documentação/contratos públicos afetados.
+- [ ] Não introduzi referências operacionais ao antigo repositório, Docker Hub ou homepage do projeto de origem.
+- [ ] Não armazenei segredos no repositório, imagem ou logs.
+- [ ] Não introduzi shell remoto arbitrário na API/Agent.
+- [ ] Dados persistentes permanecem fora da imagem Docker.
 
-Please do not use any external image service. Instead, just paste in or drag and drop the image here, and it will be uploaded automatically.
+## Automação / Control Plane
+
+Quando aplicável:
+
+- [ ] A ação é tipada e auditável.
+- [ ] O token usa o menor conjunto de scopes possível.
+- [ ] O deployment/stack respeita namespace/prefixo autorizado.
+- [ ] Regras comerciais permanecem no Control Plane e não no Dockge/Agent.
+
+## Migração / rollback
+
+Descreva como atualizar e como retornar à versão anterior quando a mudança tocar banco, persistência, Compose, API ou deployment.
+
+## Evidências
+
+Inclua logs, screenshots ou resultados de teste relevantes. Não publique segredos ou dados sensíveis.
