@@ -20,9 +20,12 @@ import jwt from "jsonwebtoken";
 import { Settings } from "../settings";
 import fs, { promises as fsAsync } from "fs";
 import path from "path";
+import { verifyTotp } from "../totp";
+import { registerTwoFAHandlers } from "./twofa-socket-handler";
 
 export class MainSocketHandler extends SocketHandler {
     create(socket : DockgeSocket, server : DockgeServer) {
+        registerTwoFAHandlers(socket, server);
 
         // ***************************
         // Public Socket API
@@ -78,9 +81,11 @@ export class MainSocketHandler extends SocketHandler {
                 ]) as User;
 
                 if (user) {
-                    // Check if the password changed
                     if (decoded.h !== shake256(user.password, SHAKE256_LENGTH)) {
                         throw new Error("The token is invalid due to password change or old token");
+                    }
+                    if (decoded.r !== Number(user.auth_revision || 1)) {
+                        throw new Error("The token is invalid because the account security policy changed");
                     }
 
                     log.debug("auth", "afterLogin");
@@ -126,16 +131,10 @@ export class MainSocketHandler extends SocketHandler {
 
             log.info("auth", `Login by username + password. IP=${clientIP}`);
 
-            // Checking
-            if (typeof callback !== "function") {
+            if (typeof callback !== "function" || !data) {
                 return;
             }
 
-            if (!data) {
-                return;
-            }
-
-            // Login Rate Limit
             if (!await loginRateLimiter.pass(callback)) {
                 log.info("auth", `Too many failed requests for user ${data.username}. IP=${clientIP}`);
                 return;
@@ -143,67 +142,60 @@ export class MainSocketHandler extends SocketHandler {
 
             const user = await this.login(data.username, data.password);
 
-            if (user) {
-                if (user.twofa_status === 0) {
-                    server.afterLogin(socket, user);
-
-                    log.info("auth", `Successfully logged in user ${data.username}. IP=${clientIP}`);
-
-                    callback({
-                        ok: true,
-                        token: User.createJWT(user, server.jwtSecret),
-                    });
-                }
-
-                if (user.twofa_status === 1 && !data.token) {
-
-                    log.info("auth", `2FA token required for user ${data.username}. IP=${clientIP}`);
-
-                    callback({
-                        tokenRequired: true,
-                    });
-                }
-
-                if (data.token) {
-                    // @ts-ignore
-                    const verify = notp.totp.verify(data.token, user.twofa_secret, twoFAVerifyOptions);
-
-                    if (user.twofa_last_token !== data.token && verify) {
-                        server.afterLogin(socket, user);
-
-                        await R.exec("UPDATE `user` SET twofa_last_token = ? WHERE id = ? ", [
-                            data.token,
-                            socket.userID,
-                        ]);
-
-                        log.info("auth", `Successfully logged in user ${data.username}. IP=${clientIP}`);
-
-                        callback({
-                            ok: true,
-                            token: User.createJWT(user, server.jwtSecret),
-                        });
-                    } else {
-
-                        log.warn("auth", `Invalid token provided for user ${data.username}. IP=${clientIP}`);
-
-                        callback({
-                            ok: false,
-                            msg: "authInvalidToken",
-                            msgi18n: true,
-                        });
-                    }
-                }
-            } else {
-
+            if (!user) {
                 log.warn("auth", `Incorrect username or password for user ${data.username}. IP=${clientIP}`);
-
                 callback({
                     ok: false,
                     msg: "authIncorrectCreds",
                     msgi18n: true,
                 });
+                return;
             }
 
+            if (!Boolean(user.twofa_status)) {
+                await server.afterLogin(socket, user);
+                log.info("auth", `Successfully logged in user ${data.username}. IP=${clientIP}`);
+                callback({
+                    ok: true,
+                    token: User.createJWT(user, server.jwtSecret),
+                });
+                return;
+            }
+
+            if (!data.token) {
+                log.info("auth", `2FA token required for user ${data.username}. IP=${clientIP}`);
+                callback({ tokenRequired: true });
+                return;
+            }
+
+            if (!await twoFaRateLimiter.pass(callback)) {
+                log.warn("auth", `Too many 2FA attempts for user ${data.username}. IP=${clientIP}`);
+                return;
+            }
+
+            const cleanToken = String(data.token).replace(/\s+/g, "");
+            const valid = Boolean(user.twofa_secret) && verifyTotp(String(user.twofa_secret), cleanToken);
+            if (valid && String(user.twofa_last_token || "") !== cleanToken) {
+                await R.exec("UPDATE `user` SET twofa_last_token = ? WHERE id = ? ", [
+                    cleanToken,
+                    user.id,
+                ]);
+                user.twofa_last_token = cleanToken;
+                await server.afterLogin(socket, user);
+
+                log.info("auth", `Successfully logged in user ${data.username} with 2FA. IP=${clientIP}`);
+                callback({
+                    ok: true,
+                    token: User.createJWT(user, server.jwtSecret),
+                });
+            } else {
+                log.warn("auth", `Invalid or reused 2FA token for user ${data.username}. IP=${clientIP}`);
+                callback({
+                    ok: false,
+                    msg: "authInvalidToken",
+                    msgi18n: true,
+                });
+            }
         });
 
         // Change Password
@@ -219,15 +211,15 @@ export class MainSocketHandler extends SocketHandler {
                     throw new Error("Password is too weak. It should contain alphabetic and numeric characters. It must be at least 6 characters in length.");
                 }
 
-                let user = await doubleCheckPassword(socket, password.currentPassword);
+                let user = await doubleCheckPassword(socket, password.currentPassword) as User;
                 await user.resetPassword(password.newPassword);
-
-                server.disconnectAllSocketClients(user.id, socket.id);
 
                 callback({
                     ok: true,
-                    msg: "Password has been updated successfully.",
+                    msg: "Password has been updated successfully. Sign in again.",
+                    reauthRequired: true,
                 });
+                setTimeout(() => server.disconnectAllSocketClients(user.id), 250);
 
             } catch (e) {
                 if (e instanceof Error) {
@@ -269,16 +261,10 @@ export class MainSocketHandler extends SocketHandler {
             try {
                 checkLogin(socket);
 
-                // If currently is disabled auth, don't need to check
-                // Disabled Auth + Want to Disable Auth => No Check
-                // Disabled Auth + Want to Enable Auth => No Check
-                // Enabled Auth + Want to Disable Auth => Check!!
-                // Enabled Auth + Want to Enable Auth => No Check
                 const currentDisabledAuth = await Settings.get("disableAuth");
                 if (!currentDisabledAuth && data.disableAuth) {
                     await doubleCheckPassword(socket, currentPassword);
                 }
-                // Handle global.env
                 if (data.globalENV && data.globalENV != "# VARIABLE=value #comment") {
                     await fsAsync.writeFile(path.join(server.stacksDir, "global.env"), data.globalENV);
                 } else {
@@ -308,7 +294,6 @@ export class MainSocketHandler extends SocketHandler {
             }
         });
 
-        // Disconnect all other socket clients of the user
         socket.on("disconnectOtherSocketClients", async () => {
             try {
                 checkLogin(socket);
@@ -320,7 +305,6 @@ export class MainSocketHandler extends SocketHandler {
             }
         });
 
-        // composerize
         socket.on("composerize", async (dockerRunCommand : unknown, callback) => {
             try {
                 checkLogin(socket);
@@ -329,10 +313,7 @@ export class MainSocketHandler extends SocketHandler {
                     throw new ValidationError("dockerRunCommand must be a string");
                 }
 
-                // Option: 'latest' | 'v2x' | 'v3x'
                 let composeTemplate = composerize(dockerRunCommand, "", "latest");
-
-                // Remove the first line "name: <your project name>"
                 composeTemplate = composeTemplate.split("\n").slice(1).join("\n");
 
                 callback({
@@ -355,12 +336,13 @@ export class MainSocketHandler extends SocketHandler {
         ]) as User;
 
         if (user && verifyPassword(password, user.password)) {
-            // Upgrade the hash to bcrypt
             if (needRehashPassword(user.password)) {
+                const passwordHash = generatePasswordHash(password);
                 await R.exec("UPDATE `user` SET password = ? WHERE id = ? ", [
-                    generatePasswordHash(password),
+                    passwordHash,
                     user.id,
                 ]);
+                user.password = passwordHash;
             }
             return user;
         }
