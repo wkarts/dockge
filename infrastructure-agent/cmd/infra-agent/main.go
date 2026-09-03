@@ -8,7 +8,6 @@ import (
     "log"
     "os"
     "os/signal"
-    "syscall"
 
     "github.com/wkarts/infrastructure-agent/internal/agent"
     "github.com/wkarts/infrastructure-agent/internal/config"
@@ -39,8 +38,22 @@ func main() {
     if err != nil {
         log.Fatalf("config: %v", err)
     }
+
+    // On Windows the same binary acts as a real SCM service when started by
+    // Service Control Manager, while remaining a normal CLI when launched by
+    // a human terminal or installer.
+    if cmd == "run" {
+        handled, serviceErr := runAsPlatformService(cfg)
+        if handled {
+            if serviceErr != nil {
+                log.Fatalf("service: %v", serviceErr)
+            }
+            return
+        }
+    }
+
     r := agent.Runner{Config: cfg}
-    ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+    ctx, cancel := signal.NotifyContext(context.Background(), platformSignals()...)
     defer cancel()
     switch cmd {
     case "run":
