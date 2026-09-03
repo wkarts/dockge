@@ -1,22 +1,57 @@
 # Generic Infrastructure Agent ↔ Control Plane REST Contract v1
 
-O contrato é intencionalmente independente de produto. PIGE360, Connect API, ERP, Scheduler ou qualquer outro Control Plane podem implementá-lo.
+O contrato é intencionalmente independente de produto. PIGE360, Connect API, ERP, Scheduler ou qualquer outro Control Plane podem implementá-lo sem introduzir regras específicas no Agent.
+
+## Modelo de vínculo
+
+Um mesmo host pode estar vinculado simultaneamente a vários Control Planes. Cada vínculo possui:
+
+- URL própria;
+- `agent_id` próprio;
+- credencial de acesso própria;
+- credencial de enrollment bootstrap própria;
+- prefixos/namespaces de deployments autorizados próprios.
+
+A indisponibilidade de um Control Plane não deve interromper heartbeat/reconciliação dos demais. Enrollment pendente é tentado novamente em ciclos posteriores sem reiniciar o Agent.
 
 ## Enrollment
 
 `POST /api/v1/infrastructure/agents/enroll`
 
-Entrada: identidade do host, hostname, SO, arquitetura, versão do Agent, inventário e bootstrap token de uso inicial.
+Entrada mínima:
 
-Saída: `agent_id` + `access_token`. O token de bootstrap deve ser invalidado/rotacionado após o enrollment.
+```json
+{
+  "agent_version": "0.1.0",
+  "inventory": {},
+  "nonce": "random-nonce"
+}
+```
+
+A requisição é autenticada pela credencial bootstrap configurada para aquele Control Plane.
+
+Saída:
+
+```json
+{
+  "agent_id": "agt_123",
+  "access_token": "one-time-returned-access-credential",
+  "poll_seconds": 30,
+  "token_expires_at": null
+}
+```
+
+Depois de uma troca bem-sucedida, o Agent persiste a credencial operacional separadamente do JSON de configuração e remove localmente a credencial bootstrap. O Control Plane também deve considerar a credencial bootstrap consumida/revogada.
 
 ## Heartbeat
 
 `POST /api/v1/infrastructure/agents/{agent_id}/heartbeat`
 
-Envia inventário, versão do Agent e saúde da API local do Dockge.
+Envia inventário, versão do Agent, timestamp e saúde/detecção do Docker, Compose e da API local do Dockge.
 
-## Desired state
+O heartbeat é informativo. Ele não deve, por si só, executar mudança de infraestrutura.
+
+## Desired state / fila de ações tipadas
 
 `GET /api/v1/infrastructure/agents/{agent_id}/desired-state`
 
@@ -30,7 +65,8 @@ Exemplo:
       "id": "act-001",
       "deployment": "pige360-colegio-navegantes",
       "type": "dockge.stack.pull",
-      "payload": {}
+      "payload": {},
+      "expires_at": "2026-09-03T23:00:00Z"
     },
     {
       "id": "act-002",
@@ -42,21 +78,90 @@ Exemplo:
 }
 ```
 
+### Regra de idempotência
+
+`action.id` é a identidade imutável da execução.
+
+Para um mesmo vínculo de Control Plane:
+
+1. cada intenção de execução recebe um `action.id` único e não vazio;
+2. se o Control Plane reenviar o **mesmo `action.id`**, o Agent **não executa a operação novamente**;
+3. o Agent lê o resultado persistido no journal local e apenas o reporta novamente;
+4. se o Control Plane deseja uma nova tentativa real da operação, deve emitir **novo `action.id`**;
+5. ações expiradas, negadas e que falharam também são resultados finais daquele `action.id` e são journaladas;
+6. IDs iguais emitidos por Control Planes diferentes não colidem, pois o journal usa `controller + action_id` como chave.
+
+O journal é persistido no `data_dir` do Agent e sobrevive a restart/upgrade. Isso evita que uma falha de rede depois de um `pull`, `up`, `restart` ou `delete` faça a mesma alteração ser executada duas vezes apenas porque o resultado não chegou ao Control Plane.
+
 ## Resultado
 
 `POST /api/v1/infrastructure/agents/{agent_id}/actions/{action_id}/result`
 
-O Agent sempre reporta sucesso/erro para permitir auditoria e idempotência no Control Plane.
+Exemplo:
+
+```json
+{
+  "action_id": "act-001",
+  "status": "succeeded",
+  "started_at": "2026-09-03T20:00:01Z",
+  "finished_at": "2026-09-03T20:00:09Z",
+  "message": ""
+}
+```
+
+Estados previstos atualmente:
+
+- `succeeded`;
+- `failed`;
+- `denied`;
+- `expired`.
+
+O Control Plane deve tornar o processamento do resultado igualmente idempotente.
+
+## Ações suportadas pelo contrato atual
+
+- `dockge.stack.apply`
+- `dockge.stack.delete`
+- `dockge.stack.pull`
+- `dockge.stack.up`
+- `dockge.stack.down`
+- `dockge.stack.restart`
+- `dockge.stack.start`
+- `dockge.stack.stop`
+- `noop`
+
+Não existe ação genérica `shell`, `exec arbitrary` ou equivalente.
 
 ## Separação de responsabilidade
 
-Políticas comerciais, adimplência, direito a upgrade, janela de manutenção e autorização humana pertencem exclusivamente ao Control Plane da plataforma. O Agent e o Dockge não conhecem CNPJ, contrato ou cobrança; apenas executam ações tipadas já autorizadas pelo Control Plane.
+Políticas comerciais, adimplência, direito a upgrade, versão autorizada, janela de manutenção, aprovação humana e obrigação de backup pertencem exclusivamente ao **Control Plane da plataforma**.
+
+O Agent e o Dockge não conhecem CNPJ, contrato, cobrança ou plano comercial. Eles executam somente ações técnicas tipadas que chegaram de um Control Plane autenticado e cujo deployment pertence ao namespace autorizado daquele vínculo.
+
+Uma atualização de instalação de cliente deve ser modelada pelo Control Plane, por exemplo:
+
+```text
+solicitação de upgrade
+        ↓
+validar entitlement/adimplência
+        ↓
+obter autorização humana quando exigida
+        ↓
+executar/validar backup segundo estratégia do produto
+        ↓
+emitir ações técnicas com IDs únicos
+        ↓
+Agent → Dockge → Docker/Compose
+```
 
 ## Segurança
 
-- HTTPS obrigatório fora de localhost.
-- Token individual por Agent; mTLS recomendado como evolução.
-- Nunca expor Docker socket ao Control Plane.
+- HTTPS obrigatório para Control Planes, salvo opt-in explícito de laboratório.
+- Credencial individual por Agent/Control Plane; rotação e revogação devem ser suportadas pelo Control Plane.
+- mTLS por instalação é evolução compatível com este contrato.
+- Nunca expor o Docker socket ao Control Plane.
 - Dockge REST deve preferencialmente escutar somente em loopback/rede privada.
-- Cada Control Plane recebe apenas os prefixes/namespaces de deployments que lhe pertencem.
+- Cada Control Plane recebe apenas os prefixos/namespaces de deployments que lhe pertencem.
 - O Agent não oferece shell remoto arbitrário.
+- Credenciais ficam em arquivos separados, com permissões restritas, e não dentro de `agent.json`.
+- O journal não deve armazenar bearer tokens, enrollment tokens ou segredos de aplicação.
