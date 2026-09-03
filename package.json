@@ -33,7 +33,8 @@
     "start-docker": "docker run --rm -p 5001:5001 --name dockge ghcr.io/wkarts/dockge:latest",
     "api-token:create": "node ./extra/generate-api-token.mjs",
     "reformat-changelog": "tsx ./extra/reformat-changelog.ts",
-    "reset-password": "tsx ./extra/reset-password.ts"
+    "reset-password": "tsx ./extra/reset-password.ts",
+    "reset-2fa": "tsx ./extra/reset-2fa.ts"
   },
   "dependencies": {
     "@homebridge/node-pty-prebuilt-multiarch": "0.11.14",
