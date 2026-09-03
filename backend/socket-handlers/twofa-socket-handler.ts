@@ -5,6 +5,7 @@ import { User } from "../models/user";
 import { checkLogin, DockgeSocket, doubleCheckPassword } from "../util-server";
 import { twoFaRateLimiter } from "../rate-limiter";
 import { createTotpUri, generateTotpSecret, verifyTotp } from "../totp";
+import { protectTotpSecret, revealTotpSecret } from "../totp-secret";
 import { registerApiTokenHandlers } from "./api-token-socket-handler";
 
 function cleanToken(value: unknown): string {
@@ -20,6 +21,11 @@ function error(callback: (value: unknown) => void, err: unknown) {
 
 async function bumpAuthRevision(userID: number): Promise<void> {
     await R.exec("UPDATE `user` SET auth_revision = COALESCE(auth_revision, 1) + 1 WHERE id = ?", [ userID ]);
+}
+
+function userTotpSecret(user: User, server: DockgeServer): string {
+    if (!user.twofa_secret) throw new Error("2FA secret is not configured");
+    return revealTotpSecret(String(user.twofa_secret), server.jwtSecret);
 }
 
 export function registerTwoFAHandlers(socket: DockgeSocket, server: DockgeServer) {
@@ -48,8 +54,9 @@ export function registerTwoFAHandlers(socket: DockgeSocket, server: DockgeServer
             }
 
             const secret = generateTotpSecret();
+            const protectedSecret = protectTotpSecret(secret, server.jwtSecret);
             await R.exec("UPDATE `user` SET twofa_secret = ?, twofa_last_token = NULL WHERE id = ?", [
-                secret,
+                protectedSecret,
                 user.id,
             ]);
 
@@ -68,10 +75,9 @@ export function registerTwoFAHandlers(socket: DockgeSocket, server: DockgeServer
             checkLogin(socket);
             if (!await twoFaRateLimiter.pass(callback)) return;
             const user = await doubleCheckPassword(socket, currentPassword) as User;
-            if (!user.twofa_secret) throw new Error("2FA setup has not been prepared");
             callback({
                 ok: true,
-                valid: verifyTotp(String(user.twofa_secret), cleanToken(token)),
+                valid: verifyTotp(userTotpSecret(user, server), cleanToken(token)),
             });
         } catch (err) {
             error(callback, err);
@@ -84,7 +90,7 @@ export function registerTwoFAHandlers(socket: DockgeSocket, server: DockgeServer
             if (!await twoFaRateLimiter.pass(callback)) return;
             const user = await doubleCheckPassword(socket, currentPassword) as User;
             const clean = cleanToken(token);
-            if (!user.twofa_secret || !verifyTotp(String(user.twofa_secret), clean)) {
+            if (!verifyTotp(userTotpSecret(user, server), clean)) {
                 throw new Error("Invalid 2FA token");
             }
 
@@ -119,7 +125,7 @@ export function registerTwoFAHandlers(socket: DockgeSocket, server: DockgeServer
             }
 
             const clean = cleanToken(token);
-            if (!verifyTotp(String(user.twofa_secret), clean)) {
+            if (!verifyTotp(userTotpSecret(user, server), clean)) {
                 throw new Error("Invalid 2FA token");
             }
             if (String(user.twofa_last_token || "") === clean) {
