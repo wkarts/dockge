@@ -1,19 +1,16 @@
 ---
-
 name: "Security Issue"
-about: "Just for alerting @louislam, do not provide any details here"
+about: "Não publique detalhes sensíveis aqui; use Security Advisory privado"
 title: "Security Issue"
-ref: "main"
+ref: "develop"
 labels:
-
-- security
-
+  - security
 ---
 
-DO NOT PROVIDE ANY DETAILS HERE. Please privately report to https://github.com/louislam/dockge/security/advisories/new.
+**NÃO PUBLIQUE DETALHES DA VULNERABILIDADE NESTA ISSUE.**
 
+Reporte de forma privada em:
 
-Why need this issue? It is because GitHub Advisory do not send a notification to @louislam, it is a workaround to do so.
+https://github.com/wkarts/dockge/security/advisories/new
 
-Your GitHub Advisory URL:
-
+Use esta issue apenas se for necessário sinalizar que um advisory privado foi aberto, sem incluir informações técnicas, provas de conceito, tokens, segredos ou dados de clientes.
