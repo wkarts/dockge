@@ -100,12 +100,14 @@ Tokens do Dockge usam escopos e namespaces. Uma credencial de PIGE360, por exemp
 
 - `develop`: integração/homologação; builds são artifacts de CI.
 - `main`: linha estável.
-- tags `agent-vX.Y.Z`: GitHub Release estável do Agent.
+- tags `infrastructure-agent-vX.Y.Z`: GitHub Release estável do Agent.
 - binários: Linux amd64/arm64, Windows amd64/arm64, macOS amd64/arm64;
 - Linux: `.deb` e `.rpm`;
 - Windows: Setup `.exe` + PowerShell/BAT;
 - macOS: `.pkg` + shell;
 - todos os pacotes recebem SHA-256.
+
+O workflow `30 · Agent Build` usa runners nativos Linux, Windows e macOS. O workflow `60 · Agent Release` publica os artefatos estáveis somente a partir de `main`, mantendo a versão do Agent independente da versão do Dockge.
 
 ## Segurança
 
