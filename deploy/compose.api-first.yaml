@@ -1,6 +1,6 @@
 services:
   dockge:
-    image: ${DOCKGE_IMAGE:-ghcr.io/wkarts/dockge}:${DOCKGE_IMAGE_TAG:-latest}
+    image: ${DOCKGE_IMAGE:-ghcr.io/wkarts/dockge}:${DOCKGE_IMAGE_TAG:-develop}
     restart: unless-stopped
     ports:
       - ${DOCKGE_BIND_HOST:-127.0.0.1}:${DOCKGE_PORT:-5001}:5001

@@ -1,0 +1,16 @@
+{
+  "tokens": [
+    {
+      "name": "pige360-control-plane",
+      "sha256": "REPLACE_WITH_SHA256_OF_RANDOM_TOKEN",
+      "scopes": ["server:read", "stacks:read", "stacks:write", "stacks:operate"],
+      "stackPrefixes": ["pige360-"]
+    },
+    {
+      "name": "connect-api-control-plane",
+      "sha256": "REPLACE_WITH_SHA256_OF_ANOTHER_RANDOM_TOKEN",
+      "scopes": ["server:read", "stacks:read", "stacks:write", "stacks:operate"],
+      "stackPrefixes": ["connect-api-"]
+    }
+  ]
+}
