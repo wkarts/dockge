@@ -1,11 +1,11 @@
 import { log } from "./log";
-import compareVersions from "compare-versions";
 import packageJSON from "../package.json";
 import { Settings } from "./settings";
 
 // How much time in ms to wait between update checks
 const UPDATE_CHECKER_INTERVAL_MS = 1000 * 60 * 60 * 48;
 const CHECK_URL = process.env.DOCKGE_UPDATE_CHECK_URL || "https://api.github.com/repos/wkarts/dockge/releases/latest";
+const stableSemVer = /^\d+\.\d+\.\d+$/;
 
 class CheckVersion {
     version = packageJSON.version;
@@ -51,7 +51,7 @@ class CheckVersion {
                     return;
                 }
 
-                if (compareVersions.validate(latest)) {
+                if (stableSemVer.test(latest)) {
                     this.latestVersion = latest;
                 }
             } catch (error) {
