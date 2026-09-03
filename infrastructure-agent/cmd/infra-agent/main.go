@@ -12,8 +12,14 @@ import (
     "github.com/wkarts/infrastructure-agent/internal/agent"
     "github.com/wkarts/infrastructure-agent/internal/config"
     "github.com/wkarts/infrastructure-agent/internal/inventory"
+    "github.com/wkarts/infrastructure-agent/internal/securefile"
     v "github.com/wkarts/infrastructure-agent/internal/version"
 )
+
+func collectInventory(cfg config.Config) interface{} {
+    credential, _ := securefile.Read(cfg.Dockge.CredentialFile)
+    return inventory.Collect(cfg.Labels, cfg.Dockge.BaseURL, credential)
+}
 
 func main() {
     cfgPath := flag.String("config", config.DefaultPath(), "path to agent.json")
@@ -63,11 +69,14 @@ func main() {
     case "once":
         err = r.Once(ctx)
     case "inventory":
-        b, _ := json.MarshalIndent(inventory.Collect(cfg.Labels, cfg.Dockge.BaseURL), "", "  ")
+        b, _ := json.MarshalIndent(collectInventory(cfg), "", "  ")
         fmt.Println(string(b))
         return
     case "doctor":
-        inv := inventory.Collect(cfg.Labels, cfg.Dockge.BaseURL)
+        inv := inventory.Collect(cfg.Labels, cfg.Dockge.BaseURL, func() string {
+            credential, _ := securefile.Read(cfg.Dockge.CredentialFile)
+            return credential
+        }())
         b, _ := json.MarshalIndent(inv, "", "  ")
         fmt.Println(string(b))
         if inv.DockerVersion == "" {
