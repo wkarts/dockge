@@ -67,17 +67,42 @@ if (typeof args.expires === "string" && args.expires.trim() !== "") {
 }
 
 const file = readTokenFile();
-const activeSameName = file.tokens.filter((record) => record.name.toLowerCase() === name.toLowerCase() && !record.disabled);
+const nowMs = Date.now();
+const activeSameName = file.tokens.filter((record) => {
+    if (record.name.toLowerCase() !== name.toLowerCase() || record.disabled) return false;
+    if (!record.expiresAt) return true;
+    return Date.parse(record.expiresAt) > nowMs;
+});
 const replace = args.replace === true;
 if (activeSameName.length > 0 && !replace) {
     throw new Error(`active token name already exists: ${name}; use --replace only when intentional rotation is required`);
 }
 
-const now = new Date().toISOString();
+const now = new Date(nowMs).toISOString();
+let graceSeconds = 300;
+if (typeof args["replace-grace-seconds"] === "string") {
+    const parsed = Number.parseInt(args["replace-grace-seconds"], 10);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 3600) {
+        throw new Error("--replace-grace-seconds must be between 0 and 3600");
+    }
+    graceSeconds = parsed;
+}
+
+// CLI replacement is primarily used by installers. Keep the previous secret
+// alive for a short bounded grace period so an interrupted local reconfigure
+// does not immediately strand the already-running Agent. Human UI rotation
+// remains immediate and uses its separate authenticated handler.
 if (replace) {
+    const graceExpiry = new Date(nowMs + graceSeconds * 1000).toISOString();
     for (const record of activeSameName) {
-        record.disabled = true;
-        record.revokedAt = now;
+        const existingExpiry = record.expiresAt ? Date.parse(record.expiresAt) : Number.POSITIVE_INFINITY;
+        if (graceSeconds === 0) {
+            record.disabled = true;
+            record.revokedAt = now;
+        } else if (!Number.isFinite(existingExpiry) || existingExpiry > Date.parse(graceExpiry)) {
+            record.expiresAt = graceExpiry;
+            record.rotatedAt = now;
+        }
     }
 }
 
@@ -101,7 +126,8 @@ if (args["token-only"] === true) {
     process.stdout.write(JSON.stringify({
         token,
         record: publicTokenRecord(record),
-        replaced: activeSameName.map(publicTokenRecord),
+        superseded: activeSameName.map(publicTokenRecord),
+        replaceGraceSeconds: replace ? graceSeconds : null,
         oneTimeSecret: true,
     }, null, 2) + "\n");
 } else {
@@ -112,5 +138,8 @@ if (args["token-only"] === true) {
     console.log(`Scopes: ${scopes.join(",")}`);
     console.log(`Prefixes: ${stackPrefixes.join(",") || "(none)"}`);
     console.log(`Expires: ${expiresAt || "never"}`);
-    if (activeSameName.length > 0) console.log(`Replaced credentials: ${activeSameName.length}`);
+    if (activeSameName.length > 0) {
+        console.log(`Superseded credentials: ${activeSameName.length}`);
+        console.log(`Grace period: ${graceSeconds}s`);
+    }
 }
