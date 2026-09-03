@@ -14,6 +14,7 @@ import (
 const maxEntries = 2048
 
 type Entry struct {
+    Key         string             `json:"key"`
     ActionID    string             `json:"action_id"`
     Result      model.ActionResult `json:"result"`
     ProcessedAt time.Time          `json:"processed_at"`
@@ -44,25 +45,32 @@ func Open(path string) (*Journal, error) {
         return nil, err
     }
     for _, entry := range data.Entries {
-        if entry.ActionID != "" {
-            j.entries[entry.ActionID] = entry
+        key := entry.Key
+        if key == "" {
+            // Compatibility with the first local journal format.
+            key = entry.ActionID
+        }
+        if key != "" {
+            entry.Key = key
+            j.entries[key] = entry
         }
     }
     return j, nil
 }
 
-func (j *Journal) Get(actionID string) (model.ActionResult, bool) {
+func (j *Journal) Get(key string) (model.ActionResult, bool) {
     j.mu.Lock()
     defer j.mu.Unlock()
-    entry, ok := j.entries[actionID]
+    entry, ok := j.entries[key]
     return entry.Result, ok
 }
 
-func (j *Journal) Put(result model.ActionResult) error {
+func (j *Journal) Put(key string, result model.ActionResult) error {
     j.mu.Lock()
     defer j.mu.Unlock()
 
-    j.entries[result.ActionID] = Entry{
+    j.entries[key] = Entry{
+        Key: key,
         ActionID: result.ActionID,
         Result: result,
         ProcessedAt: time.Now().UTC(),
@@ -81,14 +89,14 @@ func (j *Journal) Put(result model.ActionResult) error {
 
     compact := make(map[string]Entry, len(entries))
     for _, entry := range entries {
-        compact[entry.ActionID] = entry
+        compact[entry.Key] = entry
     }
     j.entries = compact
 
     if err := os.MkdirAll(filepath.Dir(j.path), 0700); err != nil {
         return err
     }
-    raw, err := json.MarshalIndent(fileFormat{Version: 1, Entries: entries}, "", "  ")
+    raw, err := json.MarshalIndent(fileFormat{Version: 2, Entries: entries}, "", "  ")
     if err != nil {
         return err
     }
