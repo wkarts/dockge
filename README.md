@@ -17,8 +17,6 @@
 
 O projeto não utiliza mais o repositório, Docker Hub, homepage, workflows de release ou governança do projeto de origem como canais operacionais. A atribuição exigida pela licença MIT original permanece preservada em `LICENSE`.
 
-> A implementação independente está sendo promovida de `develop` para `main` pela PR #2. Este README administrativo já representa a governança canônica do novo projeto.
-
 ## Capacidades
 
 - gerenciamento visual de stacks `compose.yaml`;
@@ -51,9 +49,11 @@ feature/* / fix/* / ci/*
 - `develop`: integração e homologação.
 - `master`: branch legada congelada durante a migração administrativa; será removida após `main` tornar-se a default branch.
 
+Consulte [`docs/BRANCHING-AND-GHCR.md`](docs/BRANCHING-AND-GHCR.md).
+
 ## Instalação com Docker Compose
 
-Após a promoção da PR #2, o Compose canônico será obtido diretamente de `main`:
+Requisitos: Docker Engine com Docker Compose v2.
 
 ```bash
 sudo mkdir -p /opt/dockge/data /opt/stacks
@@ -63,34 +63,112 @@ docker compose pull
 docker compose up -d
 ```
 
-Registry oficial:
+Por padrão o Compose canônico usa:
 
 ```text
-ghcr.io/wkarts/dockge
+ghcr.io/wkarts/dockge:latest
 ```
 
-Homologação:
+Para homologação:
 
 ```text
 ghcr.io/wkarts/dockge:develop
 ```
 
-Produção:
+### Persistência
 
 ```text
-ghcr.io/wkarts/dockge:<semver>
-ghcr.io/wkarts/dockge:latest
+/opt/dockge/data  -> banco, configuração, tokens e auditoria
+/opt/stacks       -> stacks e arquivos compose
 ```
 
-## Responsabilidades
+A atualização da imagem não deve apagar esses dados.
 
-Regras comerciais — inadimplência, direito a upgrade, autorização do cliente, janela de manutenção e backup obrigatório — pertencem ao **Control Plane consumidor**, nunca ao Dockge nem ao Generic Infrastructure Agent.
+## API-first
+
+A API de automação fica em:
+
+```text
+/api/v1/automation
+```
+
+Exemplos de capacidades:
+
+```text
+GET    /health
+GET    /info
+GET    /stacks
+GET    /stacks/:name
+PUT    /stacks/:name
+DELETE /stacks/:name
+POST   /stacks/:name/pull
+POST   /stacks/:name/up
+POST   /stacks/:name/down
+POST   /stacks/:name/start
+POST   /stacks/:name/stop
+POST   /stacks/:name/restart
+GET    /stacks/:name/ps
+GET    /stacks/:name/logs
+```
+
+A API não oferece shell remoto arbitrário. Automação deve usar ações tipadas e escopadas.
+
+Documentação: [`docs/contracts/dockge-api-v1.md`](docs/contracts/dockge-api-v1.md).
+
+## Generic Infrastructure Agent
+
+O diretório [`infrastructure-agent/`](infrastructure-agent/) contém um módulo Go independente, com versão e `go.mod` próprios. Ele pode ser separado futuramente para `wkarts/infrastructure-agent` sem acoplamento ao código Node/Vue do Dockge.
+
+O desenho é:
+
+```text
+Control Plane
+     │ HTTPS/REST outbound
+     ▼
+Generic Infrastructure Agent
+     │ REST local e autenticado
+     ▼
+Dockge API
+     │
+     ▼
+Docker / Compose
+```
+
+Políticas comerciais — inadimplência, direito a upgrade, autorização do cliente, janela de manutenção e exigência de backup — pertencem ao **Control Plane consumidor**, não ao Dockge nem ao Agent.
+
+## Atualização
+
+```bash
+cd /opt/dockge
+docker compose pull
+docker compose up -d
+```
+
+Em instalações de clientes, a política recomendada é atualização manual/autorizada pelo respectivo Control Plane. O executor não decide regras comerciais.
+
+## Desenvolvimento
+
+```bash
+npm ci
+npm run check-ts
+npm run lint
+npm run dev
+```
+
+Para o Agent:
+
+```bash
+cd infrastructure-agent
+go test ./...
+go build ./cmd/infra-agent
+```
 
 ## Contribuição e segurança
 
+- [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- [`SECURITY.md`](SECURITY.md)
 - Pull Requests: https://github.com/wkarts/dockge/pulls
-- Security Advisories: https://github.com/wkarts/dockge/security/advisories/new
 
 ## Licença e origem
 
-MIT. O histórico e os avisos de copyright do código-base original permanecem preservados conforme a licença. A preservação histórica/legal não cria vínculo operacional com o projeto de origem.
+MIT. Este repositório deriva de trabalho originalmente distribuído sob licença MIT. Os avisos de copyright existentes são mantidos conforme exigido pela licença.
