@@ -11,6 +11,7 @@ import {
     hashToken,
     publicTokenRecord,
     readTokenFile,
+    tokenRecordID,
     writeTokenFile,
 } from "../api/api-token-store";
 
@@ -80,7 +81,7 @@ function managementAudit(user: User, action: string, record: ApiTokenRecord) {
             principal: String(user.username),
             principal_type: "web-user",
             action,
-            target: record.id || record.name,
+            target: tokenRecordID(record),
             token_name: record.name,
             outcome: "succeeded",
         }) + "\n", { mode: 0o600 });
@@ -88,6 +89,17 @@ function managementAudit(user: User, action: string, record: ApiTokenRecord) {
     } catch {
         // Token lifecycle must not leak or fail merely because audit storage is unavailable.
     }
+}
+
+function findToken(file: ReturnType<typeof readTokenFile>, id: unknown): ApiTokenRecord {
+    const requestedID = String(id || "");
+    const record = file.tokens.find((item) => tokenRecordID(item) === requestedID);
+    if (!record) throw new Error("API token not found");
+    return record;
+}
+
+function materializeStableID(record: ApiTokenRecord): void {
+    if (!record.id) record.id = crypto.randomUUID();
 }
 
 export function registerApiTokenHandlers(socket: DockgeSocket) {
@@ -148,10 +160,10 @@ export function registerApiTokenHandlers(socket: DockgeSocket) {
             checkLogin(socket);
             const user = await doubleCheckPassword(socket, currentPassword) as User;
             const file = readTokenFile();
-            const record = file.tokens.find((item) => item.id === String(id));
-            if (!record) throw new Error("API token not found");
+            const record = findToken(file, id);
             if (record.disabled) throw new Error("Revoked API token cannot be rotated");
 
+            materializeStableID(record);
             const token = generateApiToken();
             record.sha256 = hashToken(token);
             record.rotatedAt = new Date().toISOString();
@@ -174,8 +186,8 @@ export function registerApiTokenHandlers(socket: DockgeSocket) {
             checkLogin(socket);
             const user = await doubleCheckPassword(socket, currentPassword) as User;
             const file = readTokenFile();
-            const record = file.tokens.find((item) => item.id === String(id));
-            if (!record) throw new Error("API token not found");
+            const record = findToken(file, id);
+            materializeStableID(record);
             if (!record.disabled) {
                 record.disabled = true;
                 record.revokedAt = new Date().toISOString();
