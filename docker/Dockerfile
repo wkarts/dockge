@@ -1,7 +1,7 @@
 ############################################
-# Healthcheck binary
+# Healthcheck binary (cross-compiled)
 ############################################
-FROM golang:1.23-bookworm AS build_healthcheck
+FROM --platform=$BUILDPLATFORM golang:1.23-bookworm AS build_healthcheck
 WORKDIR /src
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
@@ -10,7 +10,18 @@ RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
     go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./healthcheck.go
 
 ############################################
-# Base runtime/build image
+# Frontend build (architecture-independent)
+############################################
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS build_frontend
+WORKDIR /app
+COPY ./package.json ./package.json
+COPY ./package-lock.json ./package-lock.json
+RUN npm ci
+COPY . .
+RUN npm run build:frontend
+
+############################################
+# Base runtime image
 ############################################
 FROM node:22-bookworm-slim AS base
 RUN apt-get update \
@@ -32,9 +43,9 @@ RUN apt-get update \
     && npm install -g tsx
 
 ############################################
-# Node dependencies
+# Production Node dependencies only
 ############################################
-FROM base AS build
+FROM base AS build_runtime_dependencies
 WORKDIR /app
 COPY --chown=node:node ./package.json ./package.json
 COPY --chown=node:node ./package-lock.json ./package-lock.json
@@ -51,12 +62,12 @@ LABEL org.opencontainers.image.source="https://github.com/wkarts/dockge" \
       org.opencontainers.image.licenses="MIT"
 
 COPY --chown=node:node --from=build_healthcheck /out/healthcheck /app/extra/healthcheck
-COPY --from=build /app/node_modules /app/node_modules
+COPY --from=build_runtime_dependencies /app/node_modules /app/node_modules
 COPY --chown=node:node . .
+COPY --chown=node:node --from=build_frontend /app/frontend-dist /app/frontend-dist
 RUN mkdir -p /app/data \
     && chmod +x /app/extra/healthcheck
 
-# Node/node-pty compatibility safeguard.
 ENV UV_USE_IO_URING=0
 ENV DOCKGE_IS_CONTAINER=1
 
