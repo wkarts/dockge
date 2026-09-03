@@ -1,0 +1,44 @@
+name: 00 · PR Bootstrap Gate
+
+on:
+  pull_request:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dockge-bootstrap-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run check-ts
+      - run: npm run lint
+      - run: npm run build:frontend
+      - uses: actions/setup-go@v5
+        if: ${{ hashFiles('infrastructure-agent/go.mod') != '' }}
+        with:
+          go-version: '1.23.x'
+          cache-dependency-path: infrastructure-agent/go.mod
+      - name: Agent · testes
+        if: ${{ hashFiles('infrastructure-agent/go.mod') != '' }}
+        run: cd infrastructure-agent && go test ./...
+      - name: Independência operacional
+        shell: bash
+        run: |
+          set -euo pipefail
+          patterns='github\.com/louislam/dockge|raw\.githubusercontent\.com/louislam/dockge|dockge\.kuma\.pet|hub\.docker\.com/r/louislam/dockge|louislam/dockge:'
+          if grep -RInE "$patterns" --exclude-dir=.git --exclude=LICENSE --exclude=package-lock.json .; then
+            echo 'Referências operacionais ao projeto antigo ainda existem.' >&2
+            exit 20
+          fi
