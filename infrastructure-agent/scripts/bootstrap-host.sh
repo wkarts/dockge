@@ -112,41 +112,42 @@ bootstrap_wait_container() {
 
 bootstrap_create_agent_token() {
   local container="$1"
-  local prefixes="$2"
+  local controller="$2"
+  local prefixes="$3"
+  [[ -n "$controller" ]] || { fail "Nome do Control Plane é obrigatório para criar a credencial local."; return 1; }
   [[ -n "$prefixes" ]] || { fail "Informe pelo menos um prefixo de deployment para a credencial do Agent."; return 1; }
 
-  local token
+  local host token token_name
+  host="$(hostname -s 2>/dev/null || hostname)"
+  token_name="infra-agent:${host}:${controller}"
   token="$(docker exec "$container" npm run --silent api-token:create -- \
-    --name "infrastructure-agent-$(hostname -s 2>/dev/null || hostname)" \
+    --name "$token_name" \
     --scopes 'server:read,stacks:read,stacks:write,stacks:delete,stacks:operate,stacks:adopt' \
     --prefixes "$prefixes" \
+    --replace \
     --token-only 2>/dev/null)" || {
-      fail "Não foi possível criar a credencial local do Agent dentro do Dockge."
+      fail "Não foi possível criar/rotacionar a credencial local '$token_name' dentro do Dockge."
       return 1
     }
   [[ "$token" == dkg_* ]] || { fail "Dockge retornou uma credencial em formato inesperado."; return 1; }
   BOOTSTRAP_DOCKGE_TOKEN="$token"
 }
 
-bootstrap_existing_wkarts_dockge() {
-  local container
-  container="$(bootstrap_wkarts_dockge_container || true)"
+bootstrap_use_existing_wkarts_dockge() {
+  local container="$1"
   [[ -n "$container" ]] || return 1
 
-  info "Dockge API-first deste projeto detectado: $container"
-  local state
+  local state answer host_port
   state="$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)"
   if [[ "$state" != "true" ]]; then
-    read -r -p "O container está parado. Iniciar '$container'? [S/n]: " answer
-    if [[ "${answer,,}" != "n" && "${answer,,}" != "nao" && "${answer,,}" != "não" ]]; then
-      docker start "$container" >/dev/null
-    else
+    read -r -p "A instância escolhida está parada. Iniciar '$container'? [S/n]: " answer
+    if [[ "${answer,,}" == "n" || "${answer,,}" == "nao" || "${answer,,}" == "não" ]]; then
       return 1
     fi
+    docker start "$container" >/dev/null
   fi
-  bootstrap_wait_container "$container" || { fail "Dockge não iniciou dentro do tempo esperado."; return 1; }
 
-  local host_port
+  bootstrap_wait_container "$container" || { fail "Dockge não iniciou dentro do tempo esperado."; return 1; }
   host_port="$(docker port "$container" 5001/tcp 2>/dev/null | head -n1 | sed -E 's/.*:([0-9]+)$/\1/' || true)"
   [[ "$host_port" =~ ^[0-9]+$ ]] || host_port=5001
   BOOTSTRAP_DOCKGE_URL="http://127.0.0.1:$host_port"
@@ -216,7 +217,7 @@ COMPOSE
 }
 
 bootstrap_prepare_dockge_for_agent() {
-  local existing
+  local existing wkarts_container answer
   existing="$(bootstrap_list_dockge)"
   if [[ -n "$existing" ]]; then
     echo
@@ -226,10 +227,14 @@ bootstrap_prepare_dockge_for_agent() {
     warn "Nenhuma instalação existente será removida, atualizada ou adotada automaticamente."
   fi
 
-  if bootstrap_existing_wkarts_dockge; then
-    read -r -p "Usar esta instância API-first para o Agent? [S/n]: " answer
+  wkarts_container="$(bootstrap_wkarts_dockge_container || true)"
+  if [[ -n "$wkarts_container" ]]; then
+    info "Instância API-first deste projeto detectada: $wkarts_container"
+    read -r -p "Usar esta instância para o Agent? [S/n]: " answer
     if [[ "${answer,,}" != "n" && "${answer,,}" != "nao" && "${answer,,}" != "não" ]]; then
-      return 0
+      if bootstrap_use_existing_wkarts_dockge "$wkarts_container"; then
+        return 0
+      fi
     fi
     BOOTSTRAP_DOCKGE_URL=""
     BOOTSTRAP_DOCKGE_CONTAINER=""
