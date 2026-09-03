@@ -11,6 +11,7 @@ import { AgentManager } from "./agent-manager";
 export interface JWTDecoded {
     username : string;
     h? : string;
+    r? : number;
 }
 
 export interface DockgeSocket extends Socket {
