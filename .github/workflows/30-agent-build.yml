@@ -35,7 +35,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-          cache-dependency-path: infrastructure-agent/go.mod
+          cache-dependency-path: infrastructure-agent/go.sum
       - name: Testes
         run: go test ./...
       - name: Dependências de empacotamento
@@ -64,9 +64,9 @@ jobs:
           if-no-files-found: error
 
   windows:
-    name: Windows · EXE + Setup
+    name: Windows · EXE + Setup amd64/arm64
     runs-on: windows-2025
-    timeout-minutes: 30
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: infrastructure-agent
@@ -75,7 +75,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-          cache-dependency-path: infrastructure-agent/go.mod
+          cache-dependency-path: infrastructure-agent/go.sum
       - name: Testes
         run: go test ./...
       - name: Build Windows amd64/arm64
@@ -89,11 +89,12 @@ jobs:
             $env:GOARCH = $arch
             $env:CGO_ENABLED = '0'
             go build -trimpath -ldflags "-s -w -X github.com/wkarts/infrastructure-agent/internal/version.Version=$version" -o "dist/bin/infra-agent-windows-$arch.exe" ./cmd/infra-agent
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
       - name: Instalar Inno Setup
         shell: pwsh
         run: choco install innosetup --yes --no-progress
-      - name: Gerar Setup Windows amd64
+      - name: Gerar Setup Windows amd64/arm64
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -101,6 +102,8 @@ jobs:
           $iscc = "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw 'ISCC.exe não encontrado' }
           & $iscc "/DMyAppVersion=$version" "/DMyAppArch=amd64" "/DMySourceDir=dist\bin" packaging/windows/installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $iscc "/DMyAppVersion=$version" "/DMySourceDir=dist\bin" packaging/windows/installer-arm64.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-FileHash -Algorithm SHA256 dist/bin/*.exe, dist/packages/*.exe | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } | Set-Content dist/SHA256SUMS-windows.txt
       - uses: actions/upload-artifact@v4
@@ -124,7 +127,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
-          cache-dependency-path: infrastructure-agent/go.mod
+          cache-dependency-path: infrastructure-agent/go.sum
       - name: Testes
         run: go test ./...
       - name: Build macOS Intel/Apple Silicon e PKG
