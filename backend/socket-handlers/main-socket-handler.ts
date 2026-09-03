@@ -21,6 +21,7 @@ import { Settings } from "../settings";
 import fs, { promises as fsAsync } from "fs";
 import path from "path";
 import { verifyTotp } from "../totp";
+import { protectTotpSecret, revealTotpSecret } from "../totp-secret";
 import { registerTwoFAHandlers } from "./twofa-socket-handler";
 
 export class MainSocketHandler extends SocketHandler {
@@ -174,8 +175,29 @@ export class MainSocketHandler extends SocketHandler {
             }
 
             const cleanToken = String(data.token).replace(/\s+/g, "");
-            const valid = Boolean(user.twofa_secret) && verifyTotp(String(user.twofa_secret), cleanToken);
+            let valid = false;
+            let revealedSecret = "";
+            if (user.twofa_secret) {
+                try {
+                    revealedSecret = revealTotpSecret(String(user.twofa_secret), server.jwtSecret);
+                    valid = verifyTotp(revealedSecret, cleanToken);
+                } catch (error) {
+                    log.warn("auth", `Unable to reveal TOTP secret for user ${data.username}: ${error instanceof Error ? error.message : "unknown error"}`);
+                }
+            }
+
             if (valid && String(user.twofa_last_token || "") !== cleanToken) {
+                // Transparently migrate historical plaintext TOTP secrets the
+                // first time they are successfully used after this upgrade.
+                if (!String(user.twofa_secret).startsWith("enc:v1:")) {
+                    const protectedSecret = protectTotpSecret(revealedSecret, server.jwtSecret);
+                    await R.exec("UPDATE `user` SET twofa_secret = ? WHERE id = ?", [
+                        protectedSecret,
+                        user.id,
+                    ]);
+                    user.twofa_secret = protectedSecret;
+                }
+
                 await R.exec("UPDATE `user` SET twofa_last_token = ? WHERE id = ? ", [
                     cleanToken,
                     user.id,
@@ -203,7 +225,7 @@ export class MainSocketHandler extends SocketHandler {
             try {
                 checkLogin(socket);
 
-                if (! password.newPassword) {
+                if (!password.newPassword) {
                     throw new Error("Invalid new password");
                 }
 
@@ -211,7 +233,7 @@ export class MainSocketHandler extends SocketHandler {
                     throw new Error("Password is too weak. It should contain alphabetic and numeric characters. It must be at least 6 characters in length.");
                 }
 
-                let user = await doubleCheckPassword(socket, password.currentPassword) as User;
+                const user = await doubleCheckPassword(socket, password.currentPassword) as User;
                 await user.resetPassword(password.newPassword);
 
                 callback({
