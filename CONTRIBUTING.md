@@ -1,140 +1,105 @@
-## Can I create a pull request for Dockge?
+# Contribuindo com o Dockge
 
-Yes or no, it depends on what you will try to do. Since I don't want to waste your time, be sure to **create open a discussion, so we can have a discussion first**. Especially for a large pull request or you don't know if it will be merged or not.
+Este repositório é mantido como projeto independente em `wkarts/dockge`.
 
-Here are some references:
+## Fluxo de branches
 
-### ✅ Usually accepted:
-- Bug fix
-- Security fix
-- Adding new language files (see [these instructions](https://github.com/louislam/dockge/blob/master/frontend/src/lang/README.md))
-- Adding new language keys: `$t("...")`
+- `main`: produção e releases estáveis.
+- `develop`: integração e homologação.
+- `feat/*`, `feature/*`, `fix/*`, `hotfix/*`, `chore/*`, `refactor/*`, `docs/*`, `ci/*`, `test/*`, `perf/*`: branches de trabalho.
+- `master`: branch legada congelada durante a migração para `main`; não é destino de desenvolvimento.
 
-### ⚠️ Discussion required:
-- Large pull requests
-- New features
+Toda mudança funcional deve entrar por Pull Request. Features e correções comuns têm `develop` como base. A promoção para produção ocorre por PR `develop -> main`.
 
-### ❌ Won't be merged:
-- A dedicated PR for translating existing languages (see [these instructions](https://github.com/louislam/dockge/blob/master/frontend/src/lang/README.md))
-- Do not pass the auto-test
-- Any breaking changes
-- Duplicated pull requests
-- Buggy
-- UI/UX is not close to Dockge
-- Modifications or deletions of existing logic without a valid reason.
-- Adding functions that is completely out of scope
-- Converting existing code into other programming languages
-- Unnecessarily large code changes that are hard to review and cause conflicts with other PRs.
+## Regras de Pull Request
 
-The above cases may not cover all possible situations.
+Uma PR deve:
 
-I (@louislam) have the final say. If your pull request does not meet my expectations, I will reject it, no matter how much time you spend on it. Therefore, it is essential to have a discussion beforehand.
+- ter escopo claro e reversível;
+- preservar dados e compatibilidade sempre que possível;
+- passar CI, TypeScript, lint e build do frontend;
+- atualizar documentação quando alterar contratos públicos;
+- não introduzir publicação em registries ou namespaces que não pertençam a `wkarts`;
+- não introduzir shell remoto arbitrário na API de automação ou no Generic Infrastructure Agent;
+- manter regras comerciais fora do Dockge/Agent: licenciamento, inadimplência, direito a upgrade e autorização pertencem ao Control Plane consumidor.
 
-I will assign your pull request to a [milestone](https://github.com/louislam/dockge/milestones), if I plan to review and merge it.
+Mudanças incompatíveis devem ser identificadas explicitamente como `BREAKING CHANGE` e acompanhadas de migração.
 
-Also, please don't rush or ask for an ETA, because I have to understand the pull request, make sure it is no breaking changes and stick to my vision of this project, especially for large pull requests.
+## Convenções de commit
 
-## Project Styles
+Usamos Conventional Commits:
 
-I personally do not like something that requires so many configurations before you can finally start the app.
+```text
+feat: nova capacidade
+fix: correção
+chore: manutenção
+refactor: refatoração sem mudança funcional
+docs: documentação
+ci: integração/entrega contínua
+test: testes
+perf: desempenho
+```
 
-- Settings should be configurable in the frontend. Environment variables are discouraged, unless it is related to startup such as `DOCKGE_STACKS_DIR`
-- Easy to use
-- The web UI styling should be consistent and nice
-- No native build dependency
+`feat` promove incremento minor no próximo release estável; correções/manutenção promovem patch; breaking changes promovem major.
 
-## Coding Styles
+## Ambiente Dockge
 
-- 4 spaces indentation
-- Follow `.editorconfig`
-- Follow ESLint
-- Methods and functions should be documented with JSDoc
+Requisitos:
 
-## Name Conventions
+- Node.js >= 22.14.0;
+- npm;
+- Docker Engine + Docker Compose v2;
+- Git.
 
-- Javascript/Typescript: camelCaseType
-- SQLite: snake_case (Underscore)
-- CSS/SCSS: kebab-case (Dash)
-
-## Tools
-
-- [`Node.js`](https://nodejs.org/) >= 22.14.0
-- [`git`](https://git-scm.com/)
-- IDE that supports [`ESLint`](https://eslint.org/) and EditorConfig (I am using [`IntelliJ IDEA`](https://www.jetbrains.com/idea/))
-- A SQLite GUI tool (f.ex. [`SQLite Expert Personal`](https://www.sqliteexpert.com/download.html) or [`DBeaver Community`](https://dbeaver.io/download/))
-
-## Install Dependencies for Development
+Instalação:
 
 ```bash
-npm install
+npm ci
 ```
 
-## Dev Server
-
-```
-npm run dev:frontend
-npm run dev:backend
-```
-
-## Backend Dev Server
-
-It binds to `0.0.0.0:5001` by default.
-
-It is mainly a socket.io app + express.js.
-
-## Frontend Dev Server
-
-It binds to `0.0.0.0:5000` by default. The frontend dev server is used for development only.
-
-For production, it is not used. It will be compiled to `frontend-dist` directory instead.
-
-You can use Vue.js devtools Chrome extension for debugging.
-
-### Build the frontend
+Validação:
 
 ```bash
-npm run build
+npm run check-ts
+npm run lint
+npm run build:frontend
 ```
 
-## Database Migration
-
-TODO
-
-## Dependencies
-
-Both frontend and backend share the same package.json. However, the frontend dependencies are eventually not used in the production environment, because it is usually also baked into dist files. So:
-
-- Frontend dependencies = "devDependencies"
-    - Examples: vue, chart.js
-- Backend dependencies = "dependencies"
-    - Examples: socket.io, sqlite3
-- Development dependencies = "devDependencies"
-    - Examples: eslint, sass
-
-### Update Dependencies
-
-Should only be done by the maintainer.
+Desenvolvimento:
 
 ```bash
-npm update
-````
+npm run dev
+```
 
-It should update the patch release version only.
+## Generic Infrastructure Agent
 
-Patch release = the third digit ([Semantic Versioning](https://semver.org/))
+O Agent possui módulo Go próprio em `infrastructure-agent/`.
 
-If for security / bug / other reasons, a library must be updated, breaking changes need to be checked by the person proposing the change.
+```bash
+cd infrastructure-agent
+go test ./...
+go build ./cmd/infra-agent
+```
 
-## Translations
+O Agent deve permanecer genérico e desacoplado de produtos consumidores. Não adicione condicionais específicas de PIGE360, Connect API, ERP ou qualquer outra plataforma no núcleo do Agent.
 
-Please add **all** the strings which are translatable to `src/lang/en.json` (If translation keys are omitted, they can not be translated).
+## Estilo
 
-**Don't include any other languages in your initial Pull-Request** (even if this is your mother tongue), to avoid merge-conflicts between weblate and `master`.  
-The translations can then (after merging a PR into `master`) be translated by awesome people donating their language skills.
+- 4 espaços em TypeScript/Vue conforme `.editorconfig`;
+- ESLint obrigatório;
+- nomes TypeScript/JavaScript em camelCase;
+- SQLite em snake_case;
+- CSS/SCSS em kebab-case;
+- APIs e componentes públicos devem ter documentação suficiente para manutenção.
 
-If you want to help by translating Uptime Kuma into your language, please visit the [instructions on how to translate using weblate](https://github.com/louislam/uptime-kuma/blob/master/src/lang/README.md).
+## Persistência
 
-## Spelling & Grammar
+Nunca armazene dados operacionais necessários somente dentro da imagem Docker. Configuração, banco, tokens, auditoria e stacks devem permanecer em volumes/pastas persistentes.
 
-Feel free to correct the grammar in the documentation or code.
-My mother language is not English and my grammar is not that great.
+## Segurança
+
+Vulnerabilidades não devem ser publicadas em issues abertas. Siga `SECURITY.md`.
+
+## Licença e atribuição
+
+O projeto continua sob MIT. Arquivos derivados do código-base original devem preservar avisos de copyright/licença aplicáveis. Independência operacional não remove as obrigações de atribuição da licença.
