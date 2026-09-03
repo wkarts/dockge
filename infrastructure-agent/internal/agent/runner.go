@@ -33,28 +33,28 @@ func allowed(name string, prefixes []string) bool {
 }
 
 func (r Runner) controller(ctl config.Controller) (*controlplane.Client, string, error) {
-    token, err := securefile.Read(ctl.AccessTokenFile)
+    credential, err := securefile.Read(ctl.CredentialFile)
     if err != nil {
         return nil, "", err
     }
-    id, err := securefile.Read(ctl.AgentIDFile)
+    id, err := securefile.Read(ctl.AgentIdentityFile)
     if err != nil {
         return nil, "", err
     }
-    return controlplane.New(ctl.BaseURL, token), id, nil
+    return controlplane.New(ctl.BaseURL, credential), id, nil
 }
 
 func (r Runner) Enroll(ctx context.Context) error {
     inv := inventory.Collect(r.Config.Labels, r.Config.Dockge.BaseURL)
     for _, ctl := range r.Config.Controllers {
-        if token, err := securefile.Read(ctl.AccessTokenFile); err == nil && token != "" {
+        if credential, err := securefile.Read(ctl.CredentialFile); err == nil && credential != "" {
             continue
         }
-        enrollToken, err := securefile.Read(ctl.EnrollmentTokenFile)
+        enrollmentCredential, err := securefile.Read(ctl.EnrollmentFile)
         if err != nil {
-            return fmt.Errorf("%s enrollment token: %w", ctl.Name, err)
+            return fmt.Errorf("%s enrollment credential: %w", ctl.Name, err)
         }
-        cp := controlplane.New(ctl.BaseURL, enrollToken)
+        cp := controlplane.New(ctl.BaseURL, enrollmentCredential)
         out, err := cp.Enroll(ctx, v.Version, inv)
         if err != nil {
             return fmt.Errorf("%s enroll: %w", ctl.Name, err)
@@ -62,17 +62,14 @@ func (r Runner) Enroll(ctx context.Context) error {
         if out.AgentID == "" || out.AccessToken == "" {
             return fmt.Errorf("%s enroll returned incomplete credentials", ctl.Name)
         }
-        if err := securefile.Write(ctl.AgentIDFile, out.AgentID); err != nil {
+        if err := securefile.Write(ctl.AgentIdentityFile, out.AgentID); err != nil {
             return err
         }
-        if err := securefile.Write(ctl.AccessTokenFile, out.AccessToken); err != nil {
+        if err := securefile.Write(ctl.CredentialFile, out.AccessToken); err != nil {
             return err
         }
-        // Bootstrap enrollment tokens are one-time credentials. After a
-        // successful exchange they are removed locally; only the scoped
-        // access token remains on disk.
-        if ctl.EnrollmentTokenFile != "" {
-            _ = os.Remove(ctl.EnrollmentTokenFile)
+        if ctl.EnrollmentFile != "" {
+            _ = os.Remove(ctl.EnrollmentFile)
         }
         log.Printf("controller=%s enrolled agent_id=%s", ctl.Name, out.AgentID)
     }
@@ -93,12 +90,12 @@ func (r Runner) execute(ctx context.Context, ctl config.Controller, action model
         result.Message = "deployment outside controller scope"
         return result
     }
-    token, err := securefile.Read(r.Config.Dockge.TokenFile)
+    credential, err := securefile.Read(r.Config.Dockge.CredentialFile)
     if err != nil {
-        result.Message = "dockge token unavailable: " + err.Error()
+        result.Message = "dockge credential unavailable: " + err.Error()
         return result
     }
-    dc := dockge.New(r.Config.Dockge.BaseURL, token)
+    dc := dockge.New(r.Config.Dockge.BaseURL, credential)
     switch action.Type {
     case "dockge.stack.apply":
         err = dc.ApplyStack(ctx, action.Deployment, action.Payload)
@@ -141,10 +138,10 @@ func (r Runner) Once(ctx context.Context) error {
             errs = append(errs, fmt.Errorf("%s desired state: %w", ctl.Name, err))
             continue
         }
-        for _, a := range desired.Actions {
-            res := r.execute(ctx, ctl, a)
-            if err := cp.Report(ctx, id, res); err != nil {
-                errs = append(errs, fmt.Errorf("%s report %s: %w", ctl.Name, a.ID, err))
+        for _, action := range desired.Actions {
+            result := r.execute(ctx, ctl, action)
+            if err := cp.Report(ctx, id, result); err != nil {
+                errs = append(errs, fmt.Errorf("%s report %s: %w", ctl.Name, action.ID, err))
             }
         }
     }
