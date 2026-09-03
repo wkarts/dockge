@@ -1,27 +1,27 @@
-name: json-yaml-validate
+name: 05 · JSON YAML Validate
+
 on:
   push:
-    branches:
-      - master
+    branches: [develop, main]
   pull_request:
-    branches:
-      - master
-      - 2.0.X
+    branches: [develop, main]
   workflow_dispatch:
 
 permissions:
   contents: read
-  pull-requests: write # enable write permissions for pull request comments
+
+concurrency:
+  group: dockge-json-yaml-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  json-yaml-validate:
-    runs-on: ubuntu-latest
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
-      - name: json-yaml-validate
-        id: json-yaml-validate
+      - name: Validar JSON e YAML
         uses: GrantBirki/json-yaml-validate@v2.6.1
         with:
-          comment: "false" # enable comment mode
-          exclude_file: ".github/config/exclude.txt" # gitignore style file for exclusions
+          comment: "false"
+          exclude_file: ".github/config/exclude.txt"
