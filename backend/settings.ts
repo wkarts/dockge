@@ -4,33 +4,11 @@ import { LooseObject } from "../common/util-common";
 
 export class Settings {
 
-    /**
-     *  Example:
-     *      {
-     *         key1: {
-     *             value: "value2",
-     *             timestamp: 12345678
-     *         },
-     *         key2: {
-     *             value: 2,
-     *             timestamp: 12345678
-     *         },
-     *     }
-     */
-    static cacheList : LooseObject = {
-
-    };
+    static cacheList : LooseObject = {};
 
     static cacheCleaner? : NodeJS.Timeout;
 
-    /**
-     * Retrieve value of setting based on key
-     * @param key Key of setting to retrieve
-     * @returns Value
-     */
     static async get(key : string) {
-
-        // Start cache clear if not started yet
         if (!Settings.cacheCleaner) {
             Settings.cacheCleaner = setInterval(() => {
                 log.debug("settings", "Cache Cleaner is just started.");
@@ -40,48 +18,40 @@ export class Settings {
                         delete Settings.cacheList[key];
                     }
                 }
-
             }, 60 * 1000);
         }
 
-        // Query from cache
         if (key in Settings.cacheList) {
             const v = Settings.cacheList[key].value;
             log.debug("settings", `Get Setting (cache): ${key}: ${v}`);
             return v;
         }
 
-        const value = await R.getCell("SELECT `value` FROM setting WHERE `key` = ? ", [
-            key,
-        ]);
+        const value = await R.getCell("SELECT `value` FROM setting WHERE `key` = ? ", [ key ]);
 
         try {
             const v = JSON.parse(value);
             log.debug("settings", `Get Setting: ${key}: ${v}`);
-
             Settings.cacheList[key] = {
                 value: v,
                 timestamp: Date.now()
             };
-
             return v;
         } catch (e) {
             return value;
         }
     }
 
-    /**
-     * Sets the specified setting to specified value
-     * @param key Key of setting to set
-     * @param value Value to set to
-     * @param {?string} type Type of setting
-     * @returns {Promise<void>}
-     */
-    static async set(key : string, value : object | string | number | boolean, type : string | null = null) {
+    static assertAllowed(key: string, value: unknown) {
+        if (key === "disableAuth" && value === true && process.env.DOCKGE_ALLOW_DISABLE_AUTH !== "true") {
+            throw new Error("Disabling authentication is blocked by deployment policy. Set DOCKGE_ALLOW_DISABLE_AUTH=true only for explicitly isolated/local installations.");
+        }
+    }
 
-        let bean = await R.findOne("setting", " `key` = ? ", [
-            key,
-        ]);
+    static async set(key : string, value : object | string | number | boolean, type : string | null = null) {
+        Settings.assertAllowed(key, value);
+
+        let bean = await R.findOne("setting", " `key` = ? ", [ key ]);
         if (!bean) {
             bean = R.dispense("setting");
             bean.key = key;
@@ -93,16 +63,8 @@ export class Settings {
         Settings.deleteCache([ key ]);
     }
 
-    /**
-     * Get settings based on type
-     * @param type The type of setting
-     * @returns Settings
-     */
     static async getSettings(type : string) {
-        const list = await R.getAll("SELECT `key`, `value` FROM setting WHERE `type` = ? ", [
-            type,
-        ]);
-
+        const list = await R.getAll("SELECT `key`, `value` FROM setting WHERE `type` = ? ", [ type ]);
         const result : LooseObject = {};
 
         for (const row of list) {
@@ -116,21 +78,14 @@ export class Settings {
         return result;
     }
 
-    /**
-     * Set settings based on type
-     * @param type Type of settings to set
-     * @param data Values of settings
-     * @returns {Promise<void>}
-     */
     static async setSettings(type : string, data : LooseObject) {
         const keyList = Object.keys(data);
-
         const promiseList = [];
 
         for (const key of keyList) {
-            let bean = await R.findOne("setting", " `key` = ? ", [
-                key
-            ]);
+            Settings.assertAllowed(key, data[key]);
+
+            let bean = await R.findOne("setting", " `key` = ? ", [ key ]);
 
             if (bean == null) {
                 bean = R.dispense("setting");
@@ -145,25 +100,15 @@ export class Settings {
         }
 
         await Promise.all(promiseList);
-
         Settings.deleteCache(keyList);
     }
 
-    /**
-     * Delete selected keys from settings cache
-     * @param {string[]} keyList Keys to remove
-     * @returns {void}
-     */
     static deleteCache(keyList : string[]) {
         for (const key of keyList) {
             delete Settings.cacheList[key];
         }
     }
 
-    /**
-     * Stop the cache cleaner if running
-     * @returns {void}
-     */
     static stopCacheCleaner() {
         if (Settings.cacheCleaner) {
             clearInterval(Settings.cacheCleaner);
@@ -171,4 +116,3 @@ export class Settings {
         }
     }
 }
-

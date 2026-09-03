@@ -3,7 +3,8 @@
   "poll_interval_seconds": 30,
   "labels": {
     "owner": "customer",
-    "environment": "production"
+    "environment": "production",
+    "managed_by": "generic-infrastructure-agent"
   },
   "controllers": [
     {
@@ -12,6 +13,7 @@
       "enrollment_file": "/etc/infrastructure-agent/secrets/pige360-enrollment.credential",
       "credential_file": "/var/lib/infrastructure-agent/controllers/pige360/access.credential",
       "agent_identity_file": "/var/lib/infrastructure-agent/controllers/pige360/agent.id",
+      "dockge_credential_file": "/var/lib/infrastructure-agent/controllers/pige360/dockge.credential",
       "allowed_deployment_prefixes": ["pige360-"]
     },
     {
@@ -20,11 +22,13 @@
       "enrollment_file": "/etc/infrastructure-agent/secrets/connect-api-enrollment.credential",
       "credential_file": "/var/lib/infrastructure-agent/controllers/connect-api/access.credential",
       "agent_identity_file": "/var/lib/infrastructure-agent/controllers/connect-api/agent.id",
+      "dockge_credential_file": "/var/lib/infrastructure-agent/controllers/connect-api/dockge.credential",
       "allowed_deployment_prefixes": ["connect-api-"]
     }
   ],
   "dockge": {
     "base_url": "http://127.0.0.1:5001",
-    "credential_file": "/etc/infrastructure-agent/secrets/dockge-api.credential"
+    "credential_file": "",
+    "allow_non_loopback": false
   }
 }

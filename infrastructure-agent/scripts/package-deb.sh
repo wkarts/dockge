@@ -6,11 +6,19 @@ ARCH="${1:-amd64}"
 BIN="dist/bin/infra-agent-linux-$ARCH"
 PKG="dist/pkg/deb-$ARCH"
 rm -rf "$PKG"
-mkdir -p "$PKG/DEBIAN" "$PKG/usr/bin" "$PKG/etc/infrastructure-agent" "$PKG/lib/systemd/system" "$PKG/var/lib/infrastructure-agent" dist/packages
+mkdir -p \
+  "$PKG/DEBIAN" \
+  "$PKG/usr/bin" \
+  "$PKG/usr/lib/infrastructure-agent" \
+  "$PKG/etc/infrastructure-agent" \
+  "$PKG/lib/systemd/system" \
+  "$PKG/var/lib/infrastructure-agent" \
+  dist/packages
 chmod g-s "$PKG/DEBIAN"
 chmod 0755 "$PKG/DEBIAN"
 cp "$BIN" "$PKG/usr/bin/infra-agent"; chmod 0755 "$PKG/usr/bin/infra-agent"
 cp scripts/install.sh "$PKG/usr/bin/infra-agent-installer"; chmod 0755 "$PKG/usr/bin/infra-agent-installer"
+cp scripts/bootstrap-host.sh "$PKG/usr/lib/infrastructure-agent/bootstrap-host.sh"; chmod 0644 "$PKG/usr/lib/infrastructure-agent/bootstrap-host.sh"
 cp examples/agent.json "$PKG/etc/infrastructure-agent/agent.json.example"
 cp packaging/systemd/infrastructure-agent.service "$PKG/lib/systemd/system/"
 cat > "$PKG/DEBIAN/control" <<CTRL
@@ -20,9 +28,10 @@ Section: admin
 Priority: optional
 Architecture: $ARCH
 Maintainer: wkarts
-Depends: ca-certificates
+Depends: ca-certificates, curl
 Description: Generic REST infrastructure enrollment and deployment agent
  Cross-platform infrastructure agent for scoped Control Plane integration.
+ Includes an optional interactive Linux host bootstrap for Docker/Dockge.
 CTRL
 cat > "$PKG/DEBIAN/postinst" <<'POST'
 #!/bin/sh
@@ -37,7 +46,8 @@ fi
 printf '\n╔══════════════════════════════════════════════════════════════╗\n'
 printf '║ Generic Infrastructure Agent instalado                     ║\n'
 printf '╚══════════════════════════════════════════════════════════════╝\n'
-printf 'Próximo passo: sudo infra-agent-installer\n\n'
+printf 'Próximo passo: sudo infra-agent-installer\n'
+printf 'O assistente pode preservar runtime atual ou preparar Docker/Dockge.\n\n'
 POST
 cat > "$PKG/DEBIAN/prerm" <<'PRE'
 #!/bin/sh

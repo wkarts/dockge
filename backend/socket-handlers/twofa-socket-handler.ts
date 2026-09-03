@@ -1,0 +1,157 @@
+import { SocketHandler } from "../socket-handler";
+import { DockgeServer } from "../dockge-server";
+import { R } from "redbean-node";
+import { User } from "../models/user";
+import { checkLogin, DockgeSocket, doubleCheckPassword } from "../util-server";
+import { twoFaRateLimiter } from "../rate-limiter";
+import { createTotpUri, generateTotpSecret, verifyTotp } from "../totp";
+import { protectTotpSecret, revealTotpSecret } from "../totp-secret";
+import { registerApiTokenHandlers } from "./api-token-socket-handler";
+
+function cleanToken(value: unknown): string {
+    return typeof value === "string" ? value.replace(/\s+/g, "") : "";
+}
+
+function error(callback: (value: unknown) => void, err: unknown) {
+    callback({
+        ok: false,
+        msg: err instanceof Error ? err.message : "Unknown 2FA error",
+    });
+}
+
+async function bumpAuthRevision(userID: number): Promise<void> {
+    await R.exec("UPDATE `user` SET auth_revision = COALESCE(auth_revision, 1) + 1 WHERE id = ?", [ userID ]);
+}
+
+function userTotpSecret(user: User, server: DockgeServer): string {
+    if (!user.twofa_secret) throw new Error("2FA secret is not configured");
+    return revealTotpSecret(String(user.twofa_secret), server.jwtSecret);
+}
+
+export function registerTwoFAHandlers(socket: DockgeSocket, server: DockgeServer) {
+    // Human-only administration APIs share the authenticated Socket.IO
+    // channel. They never expose their management surface through the
+    // machine-to-machine REST bearer-token endpoint.
+    registerApiTokenHandlers(socket);
+
+    socket.on("twoFAStatus", async (callback) => {
+        try {
+            checkLogin(socket);
+            const user = await R.findOne("user", " id = ? AND active = 1 ", [ socket.userID ]) as User;
+            callback({ ok: true, status: Boolean(user?.twofa_status) });
+        } catch (err) {
+            error(callback, err);
+        }
+    });
+
+    socket.on("prepare2FA", async (currentPassword, callback) => {
+        try {
+            checkLogin(socket);
+            if (!await twoFaRateLimiter.pass(callback)) return;
+            const user = await doubleCheckPassword(socket, currentPassword) as User;
+            if (Boolean(user.twofa_status)) {
+                throw new Error("2FA is already enabled for this user");
+            }
+
+            const secret = generateTotpSecret();
+            const protectedSecret = protectTotpSecret(secret, server.jwtSecret);
+            await R.exec("UPDATE `user` SET twofa_secret = ?, twofa_last_token = NULL WHERE id = ?", [
+                protectedSecret,
+                user.id,
+            ]);
+
+            const issuer = process.env.DOCKGE_TOTP_ISSUER || "Dockge";
+            callback({
+                ok: true,
+                uri: createTotpUri(secret, String(user.username), issuer),
+            });
+        } catch (err) {
+            error(callback, err);
+        }
+    });
+
+    socket.on("verifyToken", async (token, currentPassword, callback) => {
+        try {
+            checkLogin(socket);
+            if (!await twoFaRateLimiter.pass(callback)) return;
+            const user = await doubleCheckPassword(socket, currentPassword) as User;
+            callback({
+                ok: true,
+                valid: verifyTotp(userTotpSecret(user, server), cleanToken(token)),
+            });
+        } catch (err) {
+            error(callback, err);
+        }
+    });
+
+    socket.on("save2FA", async (currentPassword, token, callback) => {
+        try {
+            checkLogin(socket);
+            if (!await twoFaRateLimiter.pass(callback)) return;
+            const user = await doubleCheckPassword(socket, currentPassword) as User;
+            const clean = cleanToken(token);
+            if (!verifyTotp(userTotpSecret(user, server), clean)) {
+                throw new Error("Invalid 2FA token");
+            }
+
+            // Do not mark the setup token as a login replay. The session is
+            // invalidated below, so allowing this current TOTP window for the
+            // first fresh login avoids forcing the administrator to wait up to
+            // 30 seconds after successfully enabling 2FA.
+            await R.exec("UPDATE `user` SET twofa_status = 1, twofa_last_token = NULL WHERE id = ?", [
+                user.id,
+            ]);
+            await bumpAuthRevision(user.id);
+
+            callback({
+                ok: true,
+                msg: "Two-factor authentication enabled. Sign in again to confirm the new security policy.",
+                reauthRequired: true,
+            });
+
+            setTimeout(() => server.disconnectAllSocketClients(user.id), 250);
+        } catch (err) {
+            error(callback, err);
+        }
+    });
+
+    socket.on("disable2FA", async (currentPassword, token, callback) => {
+        try {
+            checkLogin(socket);
+            if (!await twoFaRateLimiter.pass(callback)) return;
+            const user = await doubleCheckPassword(socket, currentPassword) as User;
+            if (!Boolean(user.twofa_status) || !user.twofa_secret) {
+                throw new Error("2FA is not enabled for this user");
+            }
+
+            const clean = cleanToken(token);
+            if (!verifyTotp(userTotpSecret(user, server), clean)) {
+                throw new Error("Invalid 2FA token");
+            }
+            if (String(user.twofa_last_token || "") === clean) {
+                throw new Error("This 2FA token was already used. Wait for the next code and try again.");
+            }
+
+            await R.exec("UPDATE `user` SET twofa_status = 0, twofa_secret = NULL, twofa_last_token = NULL WHERE id = ?", [
+                user.id,
+            ]);
+            await bumpAuthRevision(user.id);
+
+            callback({
+                ok: true,
+                msg: "Two-factor authentication disabled. Sign in again.",
+                reauthRequired: true,
+            });
+
+            setTimeout(() => server.disconnectAllSocketClients(user.id), 250);
+        } catch (err) {
+            error(callback, err);
+        }
+    });
+}
+
+export class TwoFASocketHandler extends SocketHandler {
+    create(socket: DockgeSocket, server: DockgeServer) {
+        registerTwoFAHandlers(socket, server);
+    }
+}

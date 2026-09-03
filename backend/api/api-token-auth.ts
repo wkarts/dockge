@@ -2,23 +2,17 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { NextFunction, Request, Response } from "express";
+import {
+    ApiScope,
+    ApiTokenRecord,
+    hashToken,
+    normalizeHash,
+    readTokenFile,
+    tokenFilePath,
+} from "./api-token-store";
 
-export type ApiScope =
-    | "server:read"
-    | "stacks:read"
-    | "stacks:write"
-    | "stacks:delete"
-    | "stacks:operate"
-    | "stacks:adopt";
-
-export interface ApiTokenRecord {
-    name: string;
-    sha256: string;
-    scopes: ApiScope[];
-    stackPrefixes?: string[];
-    expiresAt?: string;
-    disabled?: boolean;
-}
+export type { ApiScope, ApiTokenRecord } from "./api-token-store";
+export { hashToken, tokenFilePath } from "./api-token-store";
 
 export interface ApiPrincipal {
     name: string;
@@ -26,32 +20,10 @@ export interface ApiPrincipal {
     stackPrefixes: string[];
 }
 
-interface TokenFile { tokens: ApiTokenRecord[]; }
-
-export function tokenFilePath(): string {
-    return process.env.DOCKGE_API_TOKENS_FILE || "./data/api-tokens.json";
-}
-
-function normalizeHash(value: string): string {
-    return value.trim().toLowerCase().replace(/^sha256:/, "");
-}
-
-export function hashToken(token: string): string {
-    return crypto.createHash("sha256").update(token, "utf8").digest("hex");
-}
-
 function safeHashEqual(a: string, b: string): boolean {
     const left = Buffer.from(normalizeHash(a), "hex");
     const right = Buffer.from(normalizeHash(b), "hex");
     return left.length === 32 && right.length === 32 && crypto.timingSafeEqual(left, right);
-}
-
-function loadTokens(): ApiTokenRecord[] {
-    const file = tokenFilePath();
-    if (!fs.existsSync(file)) return [];
-    const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as TokenFile;
-    if (!Array.isArray(parsed.tokens)) throw new Error("DOCKGE API token file must contain a tokens array");
-    return parsed.tokens;
 }
 
 function usable(record: ApiTokenRecord): boolean {
@@ -69,7 +41,7 @@ export function apiAuth(requiredScope?: ApiScope) {
             if (!match) return res.status(401).json({ error: "missing_bearer_token" });
 
             const candidateHash = hashToken(match[1]);
-            const record = loadTokens().find((item) => usable(item) && safeHashEqual(item.sha256, candidateHash));
+            const record = readTokenFile().tokens.find((item) => usable(item) && safeHashEqual(item.sha256, candidateHash));
             if (!record) return res.status(401).json({ error: "invalid_or_expired_token" });
 
             const principal: ApiPrincipal = {
@@ -122,6 +94,6 @@ export function audit(res: Response, action: string, target: string, outcome: st
         }) + "\n", { mode: 0o600 });
         try { fs.chmodSync(file, 0o600); } catch { /* best effort */ }
     } catch {
-        // Audit failure must not disclose tokens or crash a successful Docker action.
+        // Audit failure must not disclose credentials or crash a successful action.
     }
 }

@@ -6,10 +6,10 @@ import (
     "fmt"
     "os"
     "path/filepath"
-    "runtime"
     "strconv"
     "strings"
 
+    "github.com/wkarts/infrastructure-agent/internal/atomicfile"
     "github.com/wkarts/infrastructure-agent/internal/securefile"
 )
 
@@ -35,21 +35,22 @@ func ConfigureFromEnv(configPath string) (Config, error) {
         return Config{}, err
     }
 
+    var previousBinding *Controller
+    for i := range existing.Controllers {
+        if existing.Controllers[i].Name == name {
+            copy := existing.Controllers[i]
+            previousBinding = &copy
+            break
+        }
+    }
+
     configDir := filepath.Dir(configPath)
     dataDir := strings.TrimSpace(os.Getenv("INFRA_AGENT_DATA_DIR"))
     if dataDir == "" {
         dataDir = existing.DataDir
     }
     if dataDir == "" {
-        if runtime.GOOS == "windows" {
-            base := os.Getenv("ProgramData")
-            if base == "" {
-                base = configDir
-            }
-            dataDir = filepath.Join(base, "InfrastructureAgent", "data")
-        } else {
-            dataDir = "/var/lib/infrastructure-agent"
-        }
+        dataDir = DefaultDataDir()
     }
 
     secretDir := filepath.Join(configDir, "secrets")
@@ -57,29 +58,37 @@ func ConfigureFromEnv(configPath string) (Config, error) {
     enrollmentFile := filepath.Join(secretDir, name+"-enrollment.credential")
     credentialFile := filepath.Join(controllerDir, "access.credential")
     identityFile := filepath.Join(controllerDir, "agent.id")
-    dockgeCredentialFile := filepath.Join(secretDir, "dockge-api.credential")
+    controllerDockgeCredentialFile := filepath.Join(controllerDir, "dockge.credential")
 
     if value := strings.TrimSpace(os.Getenv("INFRA_AGENT_ENROLLMENT_TOKEN")); value != "" {
         if err := securefile.Write(enrollmentFile, value); err != nil {
             return Config{}, err
         }
+    } else if previousBinding != nil && previousBinding.EnrollmentFile != "" {
+        enrollmentFile = previousBinding.EnrollmentFile
     }
+
     if value := strings.TrimSpace(os.Getenv("INFRA_AGENT_DOCKGE_TOKEN")); value != "" {
-        if err := securefile.Write(dockgeCredentialFile, value); err != nil {
+        if err := securefile.Write(controllerDockgeCredentialFile, value); err != nil {
             return Config{}, err
         }
-    } else if existing.Dockge.CredentialFile != "" {
-        dockgeCredentialFile = existing.Dockge.CredentialFile
+    } else if previousBinding != nil && previousBinding.DockgeCredentialFile != "" {
+        controllerDockgeCredentialFile = previousBinding.DockgeCredentialFile
+    } else {
+        // Existing installations may still rely on the legacy global Dockge
+        // credential. Do not duplicate or expose it; runner fallback handles it.
+        controllerDockgeCredentialFile = ""
     }
 
     binding := Controller{
-        Name:               name,
-        BaseURL:            baseURL,
-        EnrollmentFile:     enrollmentFile,
-        CredentialFile:     credentialFile,
-        AgentIdentityFile:  identityFile,
-        AllowedDeployments: splitCSV(os.Getenv("INFRA_AGENT_ALLOWED_PREFIXES")),
-        AllowInsecureHTTP:  envBool("INFRA_AGENT_ALLOW_INSECURE_HTTP", false),
+        Name:                 name,
+        BaseURL:              baseURL,
+        EnrollmentFile:       enrollmentFile,
+        CredentialFile:       credentialFile,
+        AgentIdentityFile:    identityFile,
+        DockgeCredentialFile: controllerDockgeCredentialFile,
+        AllowedDeployments:   splitCSV(os.Getenv("INFRA_AGENT_ALLOWED_PREFIXES")),
+        AllowInsecureHTTP:    envBool("INFRA_AGENT_ALLOW_INSECURE_HTTP", false),
     }
     controllers := make([]Controller, 0, len(existing.Controllers)+1)
     replaced := false
@@ -117,7 +126,7 @@ func ConfigureFromEnv(configPath string) (Config, error) {
         Controllers:         controllers,
         Dockge: Dockge{
             BaseURL:          dockgeURL,
-            CredentialFile:   dockgeCredentialFile,
+            CredentialFile:   existing.Dockge.CredentialFile,
             AllowNonLoopback: envBool("INFRA_AGENT_DOCKGE_ALLOW_NON_LOOPBACK", existing.Dockge.AllowNonLoopback),
         },
     }
@@ -135,7 +144,13 @@ func ConfigureFromEnv(configPath string) (Config, error) {
         return Config{}, err
     }
     raw = append(raw, '\n')
-    if err := os.WriteFile(configPath, raw, 0640); err != nil {
+
+    tempPath := configPath + ".tmp"
+    if err := os.WriteFile(tempPath, raw, 0640); err != nil {
+        return Config{}, err
+    }
+    if err := atomicfile.Replace(tempPath, configPath); err != nil {
+        _ = os.Remove(tempPath)
         return Config{}, err
     }
     _ = os.Chmod(configPath, 0640)

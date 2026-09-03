@@ -20,6 +20,7 @@
     "fmt": "eslint \"**/*.{ts,vue}\" --fix",
     "lint": "eslint \"**/*.{ts,vue}\"",
     "check-ts": "tsc --noEmit",
+    "test:security": "tsx --test backend/totp.test.ts backend/api/api-token-store.test.ts",
     "start": "tsx ./backend/index.ts",
     "dev": "concurrently -k -r \"wait-on tcp:5000 && npm run dev:backend \" \"npm run dev:frontend\"",
     "dev:backend": "cross-env NODE_ENV=development tsx watch --inspect ./backend/index.ts",
@@ -30,9 +31,10 @@
     "build:docker-develop": "docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/wkarts/dockge:develop --target release -f ./docker/Dockerfile . --push",
     "build:healthcheck": "docker buildx build -f docker/BuildHealthCheck.Dockerfile --platform linux/amd64,linux/arm64 -t ghcr.io/wkarts/dockge:build-healthcheck . --push",
     "start-docker": "docker run --rm -p 5001:5001 --name dockge ghcr.io/wkarts/dockge:latest",
-    "api-token:create": "node ./extra/generate-api-token.mjs",
+    "api-token:create": "tsx ./extra/generate-api-token.ts",
     "reformat-changelog": "tsx ./extra/reformat-changelog.ts",
-    "reset-password": "tsx ./extra/reset-password.ts"
+    "reset-password": "tsx ./extra/reset-password.ts",
+    "reset-2fa": "tsx ./extra/reset-2fa.ts"
   },
   "dependencies": {
     "@homebridge/node-pty-prebuilt-multiarch": "0.11.14",
@@ -52,7 +54,7 @@
     "jsonwebtoken": "~9.0.2",
     "jwt-decode": "~3.1.2",
     "knex": "~2.5.1",
-    "limiter-es6-compat": "~2.1.2",
+    "limiter-es6-compat": "~1.2.2",
     "mysql2": "~3.12.0",
     "promisify-child-process": "~4.1.2",
     "redbean-node": "~0.3.3",
@@ -73,6 +75,7 @@
     "@fortawesome/fontawesome-svg-core": "6.4.2",
     "@fortawesome/free-regular-svg-icons": "6.4.2",
     "@fortawesome/free-solid-svg-icons": "6.4.2",
+    "@fortawesome/vue-fontawesome": "3.0.3",
     "@types/bcryptjs": "^2.4.6",
     "@types/bootstrap": "~5.2.10",
     "@types/command-exists": "~1.2.3",

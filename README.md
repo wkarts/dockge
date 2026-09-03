@@ -23,14 +23,19 @@ O projeto não utiliza mais o repositório, Docker Hub, homepage, workflows de r
 - criação, edição, start, stop, restart, pull e remoção de stacks;
 - terminal web e acompanhamento de operações em tempo real;
 - REST API em `/api/v1/automation` para automação máquina-a-máquina;
-- Bearer tokens com armazenamento por SHA-256, scopes e expiração;
+- **API Access** no painel para criar, rotacionar e revogar credenciais;
+- Bearer tokens armazenados somente por SHA-256, com scopes, expiração e namespaces;
+- segredo de API exibido apenas uma vez na criação/rotação;
+- 2FA/TOTP funcional para acesso humano;
+- sessões web com validade limitada e revisão de segurança que invalida tokens antigos após senha/2FA;
 - isolamento por prefixo/namespace de deployment;
 - adoção explícita de stacks legadas — nenhuma stack externa é assumida automaticamente;
-- auditoria das operações da API;
+- auditoria das operações da API e do ciclo de credenciais;
 - Generic Infrastructure Agent multiplataforma em `infrastructure-agent/`;
-- integração outbound-only entre Agent e Control Planes;
-- imagens multi-arch publicadas no GHCR;
-- dados persistentes separados da imagem da aplicação.
+- integração outbound-only entre Agent e múltiplos Control Planes;
+- journal persistente de `action_id` para impedir execução duplicada após falhas de rede;
+- pipelines multi-arch para Dockge e Agent;
+- dados persistentes separados das imagens da aplicação.
 
 ## Git Flow canônico
 
@@ -38,7 +43,7 @@ O projeto não utiliza mais o repositório, Docker Hub, homepage, workflows de r
 feature/* / fix/* / ci/*
           │
           ▼
-       develop  ──> GHCR :develop + :develop-<sha>
+       develop  ──> build/test ──> GHCR :develop + :develop-<sha>
           │
           │ promoção por PR
           ▼
@@ -49,30 +54,31 @@ feature/* / fix/* / ci/*
 - `develop`: integração e homologação.
 - `master`: branch legada congelada durante a migração administrativa; será removida após `main` tornar-se a default branch.
 
+Os workflows de publicação estão implementados. **A existência de uma tag/README não substitui a confirmação de uma execução bem-sucedida do GitHub Actions/GHCR.** Antes da primeira implantação independente, confirme a imagem/tag publicada no registry.
+
 Consulte [`docs/BRANCHING-AND-GHCR.md`](docs/BRANCHING-AND-GHCR.md).
 
 ## Instalação com Docker Compose
 
 Requisitos: Docker Engine com Docker Compose v2.
 
+Depois que uma imagem independente tiver sido publicada no GHCR:
+
 ```bash
 sudo mkdir -p /opt/dockge/data /opt/stacks
 cd /opt/dockge
 curl -fsSL https://raw.githubusercontent.com/wkarts/dockge/main/compose.yaml -o compose.yaml
+# Defina DOCKGE_IMAGE_TAG para uma versão publicada quando quiser pin de produção.
 docker compose pull
 docker compose up -d
 ```
 
-Por padrão o Compose canônico usa:
+Canais previstos:
 
 ```text
-ghcr.io/wkarts/dockge:latest
-```
-
-Para homologação:
-
-```text
-ghcr.io/wkarts/dockge:develop
+ghcr.io/wkarts/dockge:develop        homologação
+ghcr.io/wkarts/dockge:<X.Y.Z>        produção pinada
+ghcr.io/wkarts/dockge:latest         release estável mais recente
 ```
 
 ### Persistência
@@ -84,6 +90,18 @@ ghcr.io/wkarts/dockge:develop
 
 A atualização da imagem não deve apagar esses dados.
 
+## Segurança humana
+
+A tela **Settings → Security** oferece 2FA/TOTP. Mudanças de senha ou política 2FA incrementam a revisão de autenticação da conta, invalidam sessões anteriores e exigem novo login.
+
+A desativação de autenticação web não é oferecida como operação normal de administração. O backend bloqueia `disableAuth=true` por padrão. Somente uma implantação explicitamente isolada pode liberar esse comportamento com:
+
+```text
+DOCKGE_ALLOW_DISABLE_AUTH=true
+```
+
+Para acesso remoto, mantenha Dockge em loopback/rede privada e publique a interface atrás de reverse proxy TLS. Veja [`docs/REVERSE-PROXY.md`](docs/REVERSE-PROXY.md).
+
 ## API-first
 
 A API de automação fica em:
@@ -92,7 +110,7 @@ A API de automação fica em:
 /api/v1/automation
 ```
 
-Exemplos de capacidades:
+Principais endpoints:
 
 ```text
 GET    /health
@@ -101,17 +119,19 @@ GET    /stacks
 GET    /stacks/:name
 PUT    /stacks/:name
 DELETE /stacks/:name
-POST   /stacks/:name/pull
-POST   /stacks/:name/up
-POST   /stacks/:name/down
-POST   /stacks/:name/start
-POST   /stacks/:name/stop
-POST   /stacks/:name/restart
+POST   /stacks/:name/actions/pull
+POST   /stacks/:name/actions/up
+POST   /stacks/:name/actions/down
+POST   /stacks/:name/actions/start
+POST   /stacks/:name/actions/stop
+POST   /stacks/:name/actions/restart
 GET    /stacks/:name/ps
 GET    /stacks/:name/logs
 ```
 
-A API não oferece shell remoto arbitrário. Automação deve usar ações tipadas e escopadas.
+A API não oferece shell remoto arbitrário. Automação usa ações tipadas, scopes e namespaces.
+
+As credenciais são administradas em **Settings → API Access**. O servidor retorna o segredo completo apenas no momento da criação/rotação e persiste somente seu SHA-256.
 
 Documentação: [`docs/contracts/dockge-api-v1.md`](docs/contracts/dockge-api-v1.md).
 
@@ -119,43 +139,67 @@ Documentação: [`docs/contracts/dockge-api-v1.md`](docs/contracts/dockge-api-v1
 
 O diretório [`infrastructure-agent/`](infrastructure-agent/) contém um módulo Go independente, com versão e `go.mod` próprios. Ele pode ser separado futuramente para `wkarts/infrastructure-agent` sem acoplamento ao código Node/Vue do Dockge.
 
-O desenho é:
+```text
+Control Plane A ─┐
+Control Plane B ─┼─ HTTPS/REST outbound ─> Generic Infrastructure Agent
+Control Plane C ─┘                              │
+                                                │ REST local autenticado
+                                                ▼
+                                           Dockge API
+                                                │
+                                                ▼
+                                         Docker / Compose
+```
+
+Cada Control Plane possui identidade, credencial e namespaces próprios. Um vínculo indisponível não deve bloquear os demais.
+
+### Idempotência de ações
+
+O Agent mantém `action-journal.json` em seu `data_dir`.
 
 ```text
-Control Plane
-     │ HTTPS/REST outbound
-     ▼
-Generic Infrastructure Agent
-     │ REST local e autenticado
-     ▼
-Dockge API
-     │
-     ▼
-Docker / Compose
+Control Plane envia action_id=act-123
+        ↓
+Agent executa uma vez
+        ↓
+grava resultado no journal
+        ↓
+reporta resultado
 ```
 
-Políticas comerciais — inadimplência, direito a upgrade, autorização do cliente, janela de manutenção e exigência de backup — pertencem ao **Control Plane consumidor**, não ao Dockge nem ao Agent.
+Se a rede cair após a execução e o Control Plane reenviar `act-123`, o Agent **não executa novamente**. Ele reenvia o resultado persistido. Para uma tentativa real nova, o Control Plane precisa emitir outro `action_id`.
 
-## Atualização
+Contrato: [`docs/contracts/control-plane-agent-api.md`](docs/contracts/control-plane-agent-api.md).
 
-```bash
-cd /opt/dockge
-docker compose pull
-docker compose up -d
-```
+## Instaladores do Agent
 
-Em instalações de clientes, a política recomendada é atualização manual/autorizada pelo respectivo Control Plane. O executor não decide regras comerciais.
+A distribuição está preparada para produzir artefatos nativos em runners do próprio sistema operacional:
+
+- Linux amd64/arm64: binário CLI, TUI de instalação, `.deb`, `.rpm`, `systemd`;
+- Windows amd64/arm64: `infra-agent.exe`, Windows Service nativo, PowerShell CLI/TUI, assistente visual e Setup `.exe`;
+- macOS Intel/Apple Silicon: binário, assistente shell, LaunchDaemon e `.pkg`.
+
+Todos os formatos mantêm modo automatizável e modo interativo apropriado ao ambiente.
+
+## Responsabilidade do Control Plane
+
+Políticas comerciais — inadimplência, entitlement de atualização, versão autorizada, aprovação do cliente, janela de manutenção e exigência de backup — pertencem ao **Control Plane consumidor**, não ao Dockge nem ao Agent.
+
+Em uma instalação de cliente, a regra recomendada permanece: atualização manual/autorizada; o Control Plane valida política/backup e somente então emite as ações técnicas para o Agent.
 
 ## Desenvolvimento
+
+Dockge:
 
 ```bash
 npm ci
 npm run check-ts
 npm run lint
-npm run dev
+npm run test:security
+npm run build:frontend
 ```
 
-Para o Agent:
+Agent:
 
 ```bash
 cd infrastructure-agent
@@ -171,4 +215,4 @@ go build ./cmd/infra-agent
 
 ## Licença e origem
 
-MIT. Este repositório deriva de trabalho originalmente distribuído sob licença MIT. Os avisos de copyright existentes são mantidos conforme exigido pela licença.
+MIT. Este repositório deriva de trabalho originalmente distribuído sob licença MIT. Os avisos de copyright existentes são mantidos conforme exigido pela licença. A preservação histórica/legal não cria dependência operacional com o projeto de origem.
