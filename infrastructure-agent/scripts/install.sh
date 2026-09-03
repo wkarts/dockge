@@ -53,8 +53,6 @@ prompt_default() {
   fi
 }
 
-# Load optional Linux host bootstrap library. The DEB/RPM installs it under
-# /usr/lib; a source checkout keeps it beside this script.
 BOOTSTRAP_LIB=""
 for candidate in \
   "$SCRIPT_DIR/bootstrap-host.sh" \
@@ -179,6 +177,7 @@ configure_agent() {
   banner
   say "${BOLD}Configuração e vínculo com Control Plane${RESET}"
   say "${DIM}Adicionar um novo vínculo preserva todos os Control Planes já configurados.${RESET}"
+  say "${DIM}Cada vínculo recebe sua própria credencial local Dockge e seus próprios namespaces.${RESET}"
   line
 
   local controller url prefixes dockge_url enrollment dockge_credential environment
@@ -192,19 +191,19 @@ configure_agent() {
   read -r -s -p 'Credencial de enrollment do Control Plane (não será exibida): ' enrollment
   echo
 
-  dockge_credential="${BOOTSTRAP_DOCKGE_TOKEN:-}"
-  if [[ -n "${BOOTSTRAP_DOCKGE_CONTAINER:-}" && -z "$dockge_credential" && -n "$prefixes" && -n "$BOOTSTRAP_LIB" ]]; then
-    read -r -p "Criar automaticamente uma credencial local do Agent em '$BOOTSTRAP_DOCKGE_CONTAINER'? [S/n]: " answer
+  dockge_credential=""
+  if [[ -n "${BOOTSTRAP_DOCKGE_CONTAINER:-}" && -n "$prefixes" && -n "$BOOTSTRAP_LIB" ]]; then
+    read -r -p "Criar/rotacionar a credencial Dockge exclusiva deste Control Plane em '$BOOTSTRAP_DOCKGE_CONTAINER'? [S/n]: " answer
     if [[ "${answer,,}" != "n" && "${answer,,}" != "nao" && "${answer,,}" != "não" ]]; then
-      if bootstrap_create_agent_token "$BOOTSTRAP_DOCKGE_CONTAINER" "$prefixes"; then
+      if bootstrap_create_agent_token "$BOOTSTRAP_DOCKGE_CONTAINER" "$controller" "$prefixes"; then
         dockge_credential="$BOOTSTRAP_DOCKGE_TOKEN"
-        ok "Credencial local criada e mantida apenas em memória até ser gravada no arquivo seguro do Agent."
+        ok "Credencial local exclusiva do vínculo '$controller' criada/rotacionada."
       fi
     fi
   fi
 
   if [[ -z "$dockge_credential" ]]; then
-    read -r -s -p 'Credencial da Dockge API (Enter para preservar a já configurada): ' dockge_credential
+    read -r -s -p 'Credencial da Dockge API deste vínculo (Enter para preservar a já configurada): ' dockge_credential
     echo
   fi
 
@@ -218,15 +217,11 @@ configure_agent() {
   INFRA_AGENT_DATA_DIR="$DATA_DIR" \
   infra-agent --config "$CONFIG_FILE" configure
 
-  # Minimize lifetime of plaintext credentials in the installer process.
   enrollment=""
   dockge_credential=""
   BOOTSTRAP_DOCKGE_TOKEN=""
 
-  ok "Configuração criada; credenciais ficam separadas do agent.json."
-  if [[ -n "${INFRA_AGENT_ENROLLMENT_TOKEN:-}" ]]; then
-    : # environment assignment above is scoped only to the configure process
-  fi
+  ok "Configuração criada; credenciais ficam separadas do agent.json e isoladas por Control Plane."
   if [[ -f "$CONFIG_DIR/secrets/$controller-enrollment.credential" ]]; then
     info "Realizando enrollment no Control Plane..."
     if infra-agent --config "$CONFIG_FILE" enroll; then
