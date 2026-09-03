@@ -1,22 +1,17 @@
 services:
   dockge:
-    image: louislam/dockge:1
+    image: ${DOCKGE_IMAGE:-ghcr.io/wkarts/dockge}:${DOCKGE_IMAGE_TAG:-latest}
     restart: unless-stopped
     ports:
-      # Host Port : Container Port
-      - 5001:5001
+      - ${DOCKGE_BIND_HOST:-127.0.0.1}:${DOCKGE_PORT:-5001}:5001
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./data:/app/data
-        
-      # If you want to use private registries, you need to share the auth file with Dockge:
-      # - /root/.docker/:/root/.docker
-
-      # Stacks Directory
-      # ⚠️ READ IT CAREFULLY. If you did it wrong, your data could end up writing into a WRONG PATH.
-      # ⚠️ 1. FULL path only. No relative path (MUST)
-      # ⚠️ 2. Left Stacks Path === Right Stacks Path (MUST)
-      - /opt/stacks:/opt/stacks
+      - ${DOCKGE_DATA_PATH:-./data}:/app/data
+      - ${DOCKGE_STACKS_PATH:-/opt/stacks}:${DOCKGE_STACKS_PATH:-/opt/stacks}
     environment:
-      # Tell Dockge where is your stacks directory
-      - DOCKGE_STACKS_DIR=/opt/stacks
+      DOCKGE_STACKS_DIR: ${DOCKGE_STACKS_PATH:-/opt/stacks}
+      DOCKGE_API_TOKENS_FILE: /app/data/api-tokens.json
+      DOCKGE_API_AUDIT_FILE: /app/data/api-audit.jsonl
+      DOCKGE_ENABLE_CONSOLE: ${DOCKGE_ENABLE_CONSOLE:-false}
+    security_opt:
+      - no-new-privileges:true
