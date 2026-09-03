@@ -1,19 +1,16 @@
 <template>
     <div>
         <div v-if="settingsLoaded" class="my-4">
-            <!-- Change Password -->
             <template v-if="!settings.disableAuth">
                 <p>
                     {{ $t("Current User") }}: <strong>{{ $root.username }}</strong>
-                    <button v-if="! settings.disableAuth" id="logout-btn" class="btn btn-danger ms-4 me-2 mb-2" @click="$root.logout">{{ $t("Logout") }}</button>
+                    <button id="logout-btn" class="btn btn-outline-danger ms-4 me-2 mb-2" @click="$root.logout">{{ $t("Logout") }}</button>
                 </p>
 
                 <h5 class="my-4 settings-subheading">{{ $t("Change Password") }}</h5>
                 <form class="mb-3" @submit.prevent="savePassword">
                     <div class="mb-3">
-                        <label for="current-password" class="form-label">
-                            {{ $t("Current Password") }}
-                        </label>
+                        <label for="current-password" class="form-label">{{ $t("Current Password") }}</label>
                         <input
                             id="current-password"
                             v-model="password.currentPassword"
@@ -25,9 +22,7 @@
                     </div>
 
                     <div class="mb-3">
-                        <label for="new-password" class="form-label">
-                            {{ $t("New Password") }}
-                        </label>
+                        <label for="new-password" class="form-label">{{ $t("New Password") }}</label>
                         <input
                             id="new-password"
                             v-model="password.newPassword"
@@ -39,9 +34,7 @@
                     </div>
 
                     <div class="mb-3">
-                        <label for="repeat-new-password" class="form-label">
-                            {{ $t("Repeat New Password") }}
-                        </label>
+                        <label for="repeat-new-password" class="form-label">{{ $t("Repeat New Password") }}</label>
                         <input
                             id="repeat-new-password"
                             v-model="password.repeatNewPassword"
@@ -51,86 +44,48 @@
                             autocomplete="new-password"
                             required
                         />
-                        <div class="invalid-feedback">
-                            {{ $t("passwordNotMatchMsg") }}
-                        </div>
+                        <div class="invalid-feedback">{{ $t("passwordNotMatchMsg") }}</div>
                     </div>
 
-                    <div>
-                        <button class="btn btn-primary" type="submit">
-                            {{ $t("Update Password") }}
-                        </button>
-                    </div>
+                    <button class="btn btn-primary" type="submit">{{ $t("Update Password") }}</button>
                 </form>
-            </template>
 
-            <!-- TODO: Hidden for now -->
-            <div v-if="! settings.disableAuth && false" class="mt-5 mb-3">
-                <h5 class="my-4 settings-subheading">
-                    {{ $t("Two Factor Authentication") }}
-                </h5>
-                <div class="mb-4">
-                    <button
-                        class="btn btn-primary me-2"
-                        type="button"
-                        @click="$refs.TwoFADialog.show()"
-                    >
+                <div class="mt-5 mb-3">
+                    <h5 class="my-3 settings-subheading">{{ $t("Two Factor Authentication") }}</h5>
+                    <p class="text-muted">
+                        Proteja o acesso humano ao Dockge com TOTP. O Agent e as APIs usam credenciais máquina-a-máquina próprias e não dependem do código TOTP humano.
+                    </p>
+                    <button class="btn btn-primary me-2" type="button" @click="$refs.TwoFADialog.show()">
                         {{ $t("2FA Settings") }}
                     </button>
                 </div>
+            </template>
+
+            <div v-else class="alert alert-danger">
+                <h5>Autenticação web desativada</h5>
+                <p class="mb-3">
+                    Este estado é legado e não é recomendado para uma plataforma de administração de infraestrutura. Reative a autenticação para habilitar 2FA e proteção de sessão.
+                </p>
+                <button id="enableAuth-btn" class="btn btn-primary" @click="enableAuth">{{ $t("Enable Auth") }}</button>
             </div>
 
-            <div class="my-4">
-                <!-- Advanced -->
-                <h5 class="my-4 settings-subheading">{{ $t("Advanced") }}</h5>
-
-                <div class="mb-4">
-                    <button v-if="settings.disableAuth" id="enableAuth-btn" class="btn btn-outline-primary me-2 mb-2" @click="enableAuth">{{ $t("Enable Auth") }}</button>
-                    <button v-if="! settings.disableAuth" id="disableAuth-btn" class="btn btn-primary me-2 mb-2" @click="confirmDisableAuth">{{ $t("Disable Auth") }}</button>
+            <div class="my-5">
+                <h5 class="my-3 settings-subheading">Segurança da sessão</h5>
+                <div class="alert alert-light border">
+                    Senha e alterações de 2FA invalidam sessões anteriores. Tokens web possuem validade limitada e são vinculados à revisão de segurança da conta.
                 </div>
             </div>
         </div>
 
         <TwoFADialog ref="TwoFADialog" />
-
-        <Confirm ref="confirmDisableAuth" btn-style="btn-danger" :yes-text="$t('I understand, please disable')" :no-text="$t('Leave')" @yes="disableAuth">
-            <i18n-t keypath="disableauth.message1" tag="p">
-                <template #disableAuth>
-                    <strong>{{ $t('disableAuth') }}</strong>
-                </template>
-            </i18n-t>
-
-            <i18n-t keypath="disableauth.message2" tag="p">
-                <template #scenarios>
-                    <strong>{{ $t('scenarios') }}</strong>
-                </template>
-            </i18n-t>
-
-            <p>{{ $t("Please use this option carefully!") }}</p>
-
-            <div class="mb-3">
-                <label for="current-password2" class="form-label">
-                    {{ $t("Current Password") }}
-                </label>
-                <input
-                    id="current-password2"
-                    v-model="password.currentPassword"
-                    type="password"
-                    class="form-control"
-                    required
-                />
-            </div>
-        </Confirm>
     </div>
 </template>
 
 <script>
-import Confirm from "../../components/Confirm.vue";
 import TwoFADialog from "../../components/TwoFADialog.vue";
 
 export default {
     components: {
-        Confirm,
         TwoFADialog
     },
 
@@ -164,50 +119,32 @@ export default {
     },
 
     methods: {
-        /** Check new passwords match before saving them */
         savePassword() {
             if (this.password.newPassword !== this.password.repeatNewPassword) {
                 this.invalidPassword = true;
-            } else {
-                this.$root
-                    .getSocket()
-                    .emit("changePassword", this.password, (res) => {
-                        this.$root.toastRes(res);
-                        if (res.ok) {
-                            this.password.currentPassword = "";
-                            this.password.newPassword = "";
-                            this.password.repeatNewPassword = "";
-                        }
-                    });
+                return;
             }
+
+            this.$root.getSocket().emit("changePassword", this.password, (res) => {
+                this.$root.toastRes(res);
+                if (res.ok) {
+                    this.password.currentPassword = "";
+                    this.password.newPassword = "";
+                    this.password.repeatNewPassword = "";
+                    if (res.reauthRequired) {
+                        this.$root.storage().removeItem("token");
+                        window.setTimeout(() => window.location.reload(), 400);
+                    }
+                }
+            });
         },
 
-        /** Disable authentication for web app access */
-        disableAuth() {
-            this.settings.disableAuth = true;
-
-            // Need current password to disable auth
-            // Set it to empty if done
-            this.saveSettings(() => {
-                this.password.currentPassword = "";
-                this.$root.username = null;
-                this.$root.socketIO.token = "autoLogin";
-            }, this.password.currentPassword);
-        },
-
-        /** Enable authentication for web app access */
         enableAuth() {
             this.settings.disableAuth = false;
             this.saveSettings();
             this.$root.storage().removeItem("token");
-            location.reload();
+            window.location.reload();
         },
-
-        /** Show confirmation dialog for disable auth */
-        confirmDisableAuth() {
-            this.$refs.confirmDisableAuth.show();
-        },
-
     },
 };
 </script>

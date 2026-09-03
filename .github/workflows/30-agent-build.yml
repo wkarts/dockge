@@ -38,6 +38,8 @@ jobs:
           cache-dependency-path: infrastructure-agent/go.sum
       - name: Testes
         run: go test ./...
+      - name: Análise estática
+        run: go vet ./...
       - name: Dependências de empacotamento
         run: sudo apt-get update && sudo apt-get install -y rpm
       - name: Build Linux amd64/arm64
@@ -78,6 +80,8 @@ jobs:
           cache-dependency-path: infrastructure-agent/go.sum
       - name: Testes
         run: go test ./...
+      - name: Análise estática
+        run: go vet ./...
       - name: Build Windows amd64/arm64
         shell: pwsh
         run: |
@@ -130,6 +134,8 @@ jobs:
           cache-dependency-path: infrastructure-agent/go.sum
       - name: Testes
         run: go test ./...
+      - name: Análise estática
+        run: go vet ./...
       - name: Build macOS Intel/Apple Silicon e PKG
         shell: bash
         run: |

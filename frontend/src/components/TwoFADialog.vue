@@ -1,60 +1,99 @@
 <template>
-    <form @submit.prevent="submit">
+    <form @submit.prevent="confirmEnableTwoFA">
         <div ref="modal" class="modal fade" tabindex="-1" data-bs-backdrop="static">
             <div class="modal-dialog">
                 <div class="modal-content">
                     <div class="modal-header">
                         <h5 class="modal-title">
                             {{ $t("Setup 2FA") }}
-                            <span v-if="twoFAStatus == true" class="badge bg-primary">{{ $t("Active") }}</span>
-                            <span v-if="twoFAStatus == false" class="badge bg-primary">{{ $t("Inactive") }}</span>
+                            <span v-if="twoFAStatus === true" class="badge bg-success ms-2">{{ $t("Active") }}</span>
+                            <span v-if="twoFAStatus === false" class="badge bg-secondary ms-2">{{ $t("Inactive") }}</span>
                         </h5>
                         <button :disabled="processing" type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" />
                     </div>
+
                     <div class="modal-body">
+                        <p class="text-muted small">
+                            Use um aplicativo autenticador compatível com TOTP. Alterações de 2FA invalidam as sessões existentes e exigem novo login.
+                        </p>
+
                         <div class="mb-3">
-                            <div v-if="uri && twoFAStatus == false" class="mx-auto text-center" style="width: 210px;">
-                                <vue-qrcode :key="uri" :value="uri" type="image/png" :quality="1" :color="{ light: '#ffffffff' }" />
-                                <button v-show="!showURI" type="button" class="btn btn-outline-primary btn-sm mt-2" @click="showURI = true">{{ $t("Show URI") }}</button>
-                            </div>
-                            <p v-if="showURI && twoFAStatus == false" class="text-break mt-2">{{ uri }}</p>
+                            <label for="twofa-current-password" class="form-label">{{ $t("Current Password") }}</label>
+                            <input
+                                id="twofa-current-password"
+                                v-model="currentPassword"
+                                type="password"
+                                class="form-control"
+                                autocomplete="current-password"
+                                required
+                            />
+                        </div>
 
-                            <div v-if="!(uri && twoFAStatus == false)" class="mb-3">
-                                <label for="current-password" class="form-label">
-                                    {{ $t("Current Password") }}
-                                </label>
-                                <input
-                                    id="current-password"
-                                    v-model="currentPassword"
-                                    type="password"
-                                    class="form-control"
-                                    autocomplete="current-password"
-                                    required
-                                />
-                            </div>
-
-                            <button v-if="uri == null && twoFAStatus == false" class="btn btn-primary" type="button" @click="prepare2FA()">
+                        <template v-if="twoFAStatus === false">
+                            <button v-if="!uri" class="btn btn-primary" type="button" :disabled="processing || !currentPassword" @click="prepare2FA">
                                 {{ $t("Enable 2FA") }}
                             </button>
 
-                            <button v-if="twoFAStatus == true" class="btn btn-danger" type="button" :disabled="processing" @click="confirmDisableTwoFA()">
+                            <template v-if="uri">
+                                <div class="mx-auto text-center" style="width: 220px;">
+                                    <vue-qrcode :key="uri" :value="uri" type="image/png" :quality="1" :color="{ light: '#ffffffff' }" />
+                                    <button v-show="!showURI" type="button" class="btn btn-outline-secondary btn-sm mt-2" @click="showURI = true">
+                                        {{ $t("Show URI") }}
+                                    </button>
+                                </div>
+                                <p v-if="showURI" class="text-break mt-2 small">{{ uri }}</p>
+
+                                <div class="mt-3">
+                                    <label for="twofa-token-enable" class="form-label">{{ $t("twoFAVerifyLabel") }}</label>
+                                    <div class="input-group">
+                                        <input
+                                            id="twofa-token-enable"
+                                            v-model="token"
+                                            type="text"
+                                            inputmode="numeric"
+                                            pattern="[0-9]*"
+                                            maxlength="6"
+                                            class="form-control"
+                                            autocomplete="one-time-code"
+                                            required
+                                            @input="tokenValid = false"
+                                        >
+                                        <button class="btn btn-outline-primary" type="button" :disabled="processing || token.length !== 6" @click="verifyToken">
+                                            {{ $t("Verify Token") }}
+                                        </button>
+                                    </div>
+                                    <p v-show="tokenValid" class="mt-2 text-success">{{ $t("tokenValidSettingsMsg") }}</p>
+                                </div>
+                            </template>
+                        </template>
+
+                        <template v-else-if="twoFAStatus === true">
+                            <div class="alert alert-success py-2">
+                                Autenticação em dois fatores está ativa nesta conta.
+                            </div>
+                            <div class="mb-3">
+                                <label for="twofa-token-disable" class="form-label">Código atual do autenticador</label>
+                                <input
+                                    id="twofa-token-disable"
+                                    v-model="token"
+                                    type="text"
+                                    inputmode="numeric"
+                                    pattern="[0-9]*"
+                                    maxlength="6"
+                                    class="form-control"
+                                    autocomplete="one-time-code"
+                                    required
+                                >
+                            </div>
+                            <button class="btn btn-danger" type="button" :disabled="processing || !currentPassword || token.length !== 6" @click="confirmDisableTwoFA">
                                 {{ $t("Disable 2FA") }}
                             </button>
-
-                            <div v-if="uri && twoFAStatus == false" class="mt-3">
-                                <label for="basic-url" class="form-label">{{ $t("twoFAVerifyLabel") }}</label>
-                                <div class="input-group">
-                                    <input v-model="token" type="text" maxlength="6" class="form-control" autocomplete="one-time-code" required>
-                                    <button class="btn btn-outline-primary" type="button" @click="verifyToken()">{{ $t("Verify Token") }}</button>
-                                </div>
-                                <p v-show="tokenValid" class="mt-2" style="color: green;">{{ $t("tokenValidSettingsMsg") }}</p>
-                            </div>
-                        </div>
+                        </template>
                     </div>
 
-                    <div v-if="uri && twoFAStatus == false" class="modal-footer">
-                        <button type="submit" class="btn btn-primary" :disabled="processing || tokenValid == false" @click="confirmEnableTwoFA()">
-                            <div v-if="processing" class="spinner-border spinner-border-sm me-1"></div>
+                    <div v-if="uri && twoFAStatus === false" class="modal-footer">
+                        <button type="submit" class="btn btn-primary" :disabled="processing || !tokenValid">
+                            <span v-if="processing" class="spinner-border spinner-border-sm me-1"></span>
                             {{ $t("Save") }}
                         </button>
                     </div>
@@ -63,7 +102,7 @@
         </div>
     </form>
 
-    <Confirm ref="confirmEnableTwoFA" btn-style="btn-danger" :yes-text="$t('Yes')" :no-text="$t('No')" @yes="save2FA">
+    <Confirm ref="confirmEnableTwoFA" btn-style="btn-primary" :yes-text="$t('Yes')" :no-text="$t('No')" @yes="save2FA">
         {{ $t("confirmEnableTwoFAMsg") }}
     </Confirm>
 
@@ -84,7 +123,6 @@ export default {
         Confirm,
         VueQrcode,
     },
-    props: {},
     data() {
         return {
             currentPassword: "",
@@ -92,7 +130,7 @@ export default {
             uri: null,
             tokenValid: false,
             twoFAStatus: null,
-            token: null,
+            token: "",
             showURI: false,
         };
     },
@@ -101,92 +139,97 @@ export default {
         this.getStatus();
     },
     methods: {
-        /** Show the dialog */
         show() {
+            this.currentPassword = "";
+            this.token = "";
+            this.uri = null;
+            this.tokenValid = false;
+            this.showURI = false;
+            this.getStatus();
             this.modal.show();
         },
 
-        /** Show dialog to confirm enabling 2FA */
         confirmEnableTwoFA() {
+            if (!this.tokenValid) return;
             this.$refs.confirmEnableTwoFA.show();
         },
 
-        /** Show dialog to confirm disabling 2FA */
         confirmDisableTwoFA() {
             this.$refs.confirmDisableTwoFA.show();
         },
 
-        /** Prepare 2FA configuration */
         prepare2FA() {
             this.processing = true;
-
             this.$root.getSocket().emit("prepare2FA", this.currentPassword, (res) => {
                 this.processing = false;
-
                 if (res.ok) {
                     this.uri = res.uri;
+                    this.token = "";
+                    this.tokenValid = false;
                 } else {
                     toast.error(res.msg);
                 }
             });
         },
 
-        /** Save the current 2FA configuration */
         save2FA() {
             this.processing = true;
-
-            this.$root.getSocket().emit("save2FA", this.currentPassword, (res) => {
+            this.$root.getSocket().emit("save2FA", this.currentPassword, this.token, (res) => {
                 this.processing = false;
-
                 if (res.ok) {
                     this.$root.toastRes(res);
-                    this.getStatus();
-                    this.currentPassword = "";
                     this.modal.hide();
+                    this.finishSecurityChange(res);
                 } else {
                     toast.error(res.msg);
                 }
             });
         },
 
-        /** Disable 2FA for this user */
         disable2FA() {
             this.processing = true;
-
-            this.$root.getSocket().emit("disable2FA", this.currentPassword, (res) => {
+            this.$root.getSocket().emit("disable2FA", this.currentPassword, this.token, (res) => {
                 this.processing = false;
-
                 if (res.ok) {
                     this.$root.toastRes(res);
-                    this.getStatus();
-                    this.currentPassword = "";
                     this.modal.hide();
+                    this.finishSecurityChange(res);
                 } else {
                     toast.error(res.msg);
                 }
             });
         },
 
-        /** Verify the token generated by the user */
         verifyToken() {
+            this.processing = true;
             this.$root.getSocket().emit("verifyToken", this.token, this.currentPassword, (res) => {
+                this.processing = false;
                 if (res.ok) {
-                    this.tokenValid = res.valid;
+                    this.tokenValid = Boolean(res.valid);
+                    if (!res.valid) toast.error("Código TOTP inválido.");
                 } else {
                     toast.error(res.msg);
                 }
             });
         },
 
-        /** Get current status of 2FA */
         getStatus() {
             this.$root.getSocket().emit("twoFAStatus", (res) => {
                 if (res.ok) {
-                    this.twoFAStatus = res.status;
+                    this.twoFAStatus = Boolean(res.status);
                 } else {
                     toast.error(res.msg);
                 }
             });
+        },
+
+        finishSecurityChange(res) {
+            if (res.reauthRequired) {
+                this.$root.storage().removeItem("token");
+                window.setTimeout(() => window.location.reload(), 400);
+            } else {
+                this.getStatus();
+            }
         },
     },
 };
@@ -196,7 +239,8 @@ export default {
 @import "../styles/vars.scss";
 
 .dark {
-    .modal-dialog .form-text, .modal-dialog p {
+    .modal-dialog .form-text,
+    .modal-dialog p {
         color: $dark-font-color;
     }
 }

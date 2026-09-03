@@ -2,6 +2,23 @@ package model
 
 import "time"
 
+type DockgeContainer struct {
+    Name  string `json:"name"`
+    Image string `json:"image"`
+    State string `json:"state,omitempty"`
+}
+
+type DockgeInventory struct {
+    Detected       bool              `json:"detected"`
+    Reachable      bool              `json:"reachable"`
+    AutomationAPI  bool              `json:"automation_api"`
+    Version        string            `json:"version,omitempty"`
+    BaseURL        string            `json:"base_url,omitempty"`
+    ContainerName  string            `json:"container_name,omitempty"`  // compatibility/primary discovery
+    ContainerImage string            `json:"container_image,omitempty"` // compatibility/primary discovery
+    Containers     []DockgeContainer `json:"containers,omitempty"`
+}
+
 type Inventory struct {
     Hostname        string            `json:"hostname"`
     OS              string            `json:"os"`
@@ -13,7 +30,8 @@ type Inventory struct {
     MemoryBytes     uint64            `json:"memory_bytes,omitempty"`
     DockerVersion   string            `json:"docker_version,omitempty"`
     ComposeVersion  string            `json:"compose_version,omitempty"`
-    DockgeReachable bool              `json:"dockge_reachable"`
+    DockgeReachable bool              `json:"dockge_reachable"` // compatibility field
+    Dockge           DockgeInventory   `json:"dockge"`
     Labels          map[string]string `json:"labels,omitempty"`
 }
 

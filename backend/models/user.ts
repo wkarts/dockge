@@ -5,31 +5,34 @@ import { generatePasswordHash, shake256, SHAKE256_LENGTH } from "../password-has
 
 export class User extends BeanModel {
     /**
-     * Reset user password
-     * Fix #1510, as in the context reset-password.js, there is no auto model mapping. Call this static function instead.
+     * Reset a user password and invalidate every previously issued session.
      * @param {number} userID ID of user to update
      * @param {string} newPassword Users new password
-     * @returns {Promise<void>}
+     * @returns {Promise<string>} Newly persisted password hash
      */
-    static async resetPassword(userID : number, newPassword : string) {
-        await R.exec("UPDATE `user` SET password = ? WHERE id = ? ", [
-            generatePasswordHash(newPassword),
+    static async resetPassword(userID : number, newPassword : string): Promise<string> {
+        const hash = generatePasswordHash(newPassword);
+        await R.exec("UPDATE `user` SET password = ?, auth_revision = COALESCE(auth_revision, 1) + 1 WHERE id = ? ", [
+            hash,
             userID
         ]);
+        return hash;
     }
 
     /**
-     * Reset this users password
+     * Reset this user's password and keep the in-memory bean synchronized
+     * with the persisted hash/revision.
      * @param {string} newPassword
      * @returns {Promise<void>}
      */
     async resetPassword(newPassword : string) {
-        await User.resetPassword(this.id, newPassword);
-        this.password = newPassword;
+        this.password = await User.resetPassword(this.id, newPassword);
+        this.auth_revision = Number(this.auth_revision || 1) + 1;
     }
 
     /**
-     * Create a new JWT for a user
+     * Create a new JWT for a user. auth_revision intentionally participates
+     * in the session contract so password/2FA changes invalidate old tokens.
      * @param {User} user The User to create a JsonWebToken for
      * @param {string} jwtSecret The key used to sign the JsonWebToken
      * @returns {string} the JsonWebToken as a string
@@ -38,7 +41,10 @@ export class User extends BeanModel {
         return jwt.sign({
             username: user.username,
             h: shake256(user.password, SHAKE256_LENGTH),
-        }, jwtSecret);
+            r: Number(user.auth_revision || 1),
+        }, jwtSecret, {
+            expiresIn: "7d",
+        });
     }
 
 }
