@@ -67,8 +67,18 @@ if (typeof args.expires === "string" && args.expires.trim() !== "") {
 }
 
 const file = readTokenFile();
-if (file.tokens.some((record) => record.name.toLowerCase() === name.toLowerCase() && !record.disabled)) {
-    throw new Error(`active token name already exists: ${name}`);
+const activeSameName = file.tokens.filter((record) => record.name.toLowerCase() === name.toLowerCase() && !record.disabled);
+const replace = args.replace === true;
+if (activeSameName.length > 0 && !replace) {
+    throw new Error(`active token name already exists: ${name}; use --replace only when intentional rotation is required`);
+}
+
+const now = new Date().toISOString();
+if (replace) {
+    for (const record of activeSameName) {
+        record.disabled = true;
+        record.revokedAt = now;
+    }
 }
 
 const token = generateApiToken();
@@ -80,7 +90,7 @@ const record = {
     stackPrefixes,
     expiresAt,
     disabled: false,
-    createdAt: new Date().toISOString(),
+    createdAt: now,
 };
 file.tokens.push(record);
 writeTokenFile(file);
@@ -91,14 +101,16 @@ if (args["token-only"] === true) {
     process.stdout.write(JSON.stringify({
         token,
         record: publicTokenRecord(record),
+        replaced: activeSameName.map(publicTokenRecord),
         oneTimeSecret: true,
     }, null, 2) + "\n");
 } else {
-    console.log("Dockge API credential created.");
+    console.log(replace && activeSameName.length > 0 ? "Dockge API credential rotated." : "Dockge API credential created.");
     console.log("Copy this value now; only its SHA-256 is persisted:");
     console.log(token);
     console.log(`Name: ${name}`);
     console.log(`Scopes: ${scopes.join(",")}`);
     console.log(`Prefixes: ${stackPrefixes.join(",") || "(none)"}`);
     console.log(`Expires: ${expiresAt || "never"}`);
+    if (activeSameName.length > 0) console.log(`Replaced credentials: ${activeSameName.length}`);
 }
