@@ -35,17 +35,43 @@ type Config struct {
     Dockge              Dockge            `json:"dockge"`
 }
 
+func defaultConfigPath(goos, programData string) string {
+    switch goos {
+    case "windows":
+        if programData != "" {
+            return filepath.Join(programData, "InfrastructureAgent", "agent.json")
+        }
+        return filepath.Join(".", "agent.json")
+    case "darwin":
+        return "/Library/Application Support/InfrastructureAgent/agent.json"
+    default:
+        return "/etc/infrastructure-agent/agent.json"
+    }
+}
+
+func defaultDataDir(goos, programData string) string {
+    switch goos {
+    case "windows":
+        if programData != "" {
+            return filepath.Join(programData, "InfrastructureAgent", "data")
+        }
+        return filepath.Join(".", "data")
+    case "darwin":
+        return "/Library/Application Support/InfrastructureAgent/data"
+    default:
+        return "/var/lib/infrastructure-agent"
+    }
+}
+
 func DefaultPath() string {
     if v := os.Getenv("INFRA_AGENT_CONFIG"); v != "" {
         return v
     }
-    if runtime.GOOS == "windows" {
-        if pd := os.Getenv("ProgramData"); pd != "" {
-            return filepath.Join(pd, "InfrastructureAgent", "agent.json")
-        }
-        return filepath.Join(".", "agent.json")
-    }
-    return "/etc/infrastructure-agent/agent.json"
+    return defaultConfigPath(runtime.GOOS, os.Getenv("ProgramData"))
+}
+
+func DefaultDataDir() string {
+    return defaultDataDir(runtime.GOOS, os.Getenv("ProgramData"))
 }
 
 func Load(path string) (Config, error) {
@@ -58,7 +84,7 @@ func Load(path string) (Config, error) {
         return Config{}, err
     }
     if cfg.DataDir == "" {
-        cfg.DataDir = "/var/lib/infrastructure-agent"
+        cfg.DataDir = DefaultDataDir()
     }
     if cfg.PollIntervalSeconds <= 0 {
         cfg.PollIntervalSeconds = 30
