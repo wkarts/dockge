@@ -2,14 +2,21 @@ package model
 
 import "time"
 
+type DockgeContainer struct {
+    Name  string `json:"name"`
+    Image string `json:"image"`
+    State string `json:"state,omitempty"`
+}
+
 type DockgeInventory struct {
-    Detected       bool   `json:"detected"`
-    Reachable      bool   `json:"reachable"`
-    AutomationAPI  bool   `json:"automation_api"`
-    Version        string `json:"version,omitempty"`
-    BaseURL        string `json:"base_url,omitempty"`
-    ContainerName  string `json:"container_name,omitempty"`
-    ContainerImage string `json:"container_image,omitempty"`
+    Detected       bool              `json:"detected"`
+    Reachable      bool              `json:"reachable"`
+    AutomationAPI  bool              `json:"automation_api"`
+    Version        string            `json:"version,omitempty"`
+    BaseURL        string            `json:"base_url,omitempty"`
+    ContainerName  string            `json:"container_name,omitempty"`  // compatibility/primary discovery
+    ContainerImage string            `json:"container_image,omitempty"` // compatibility/primary discovery
+    Containers     []DockgeContainer `json:"containers,omitempty"`
 }
 
 type Inventory struct {
