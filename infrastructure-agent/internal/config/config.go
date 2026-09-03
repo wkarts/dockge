@@ -103,10 +103,19 @@ func (cfg Config) Validate() error {
     if len(cfg.Controllers) == 0 {
         return errors.New("at least one controller is required")
     }
+
+    seenControllerNames := make(map[string]int, len(cfg.Controllers))
     for i, ctl := range cfg.Controllers {
-        if ctl.Name == "" || ctl.BaseURL == "" {
+        name := strings.TrimSpace(ctl.Name)
+        if name == "" || ctl.BaseURL == "" {
             return fmt.Errorf("controllers[%d] name and base_url are required", i)
         }
+        normalizedName := strings.ToLower(name)
+        if previousIndex, exists := seenControllerNames[normalizedName]; exists {
+            return fmt.Errorf("controllers[%d].name duplicates controllers[%d].name (%q); controller names must be unique", i, previousIndex, name)
+        }
+        seenControllerNames[normalizedName] = i
+
         u, err := url.Parse(ctl.BaseURL)
         if err != nil || u.Host == "" {
             return fmt.Errorf("controllers[%d].base_url is invalid", i)
