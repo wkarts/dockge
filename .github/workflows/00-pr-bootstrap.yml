@@ -29,7 +29,7 @@ jobs:
         if: ${{ hashFiles('infrastructure-agent/go.mod') != '' }}
         with:
           go-version: '1.23.x'
-          cache-dependency-path: infrastructure-agent/go.mod
+          cache-dependency-path: infrastructure-agent/go.sum
       - name: Agent · testes
         if: ${{ hashFiles('infrastructure-agent/go.mod') != '' }}
         run: cd infrastructure-agent && go test ./...
