@@ -8,6 +8,7 @@ import (
     "sync"
     "time"
 
+    "github.com/wkarts/infrastructure-agent/internal/atomicfile"
     "github.com/wkarts/infrastructure-agent/internal/model"
 )
 
@@ -101,11 +102,12 @@ func (j *Journal) Put(key string, result model.ActionResult) error {
         return err
     }
     raw = append(raw, '\n')
+
     tmp := j.path + ".tmp"
     if err := os.WriteFile(tmp, raw, 0600); err != nil {
         return err
     }
-    if err := os.Rename(tmp, j.path); err != nil {
+    if err := atomicfile.Replace(tmp, j.path); err != nil {
         _ = os.Remove(tmp)
         return err
     }
