@@ -1,13 +1,18 @@
 {
   "name": "dockge",
   "version": "1.5.0",
+  "description": "Independent API-first Docker Compose management and infrastructure automation platform",
   "type": "module",
   "private": false,
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/wkarts/dockge.git"
   },
   "homepage": "https://github.com/wkarts/dockge#readme",
+  "bugs": {
+    "url": "https://github.com/wkarts/dockge/issues"
+  },
   "engines": {
     "node": ">= 22.14.0"
   },
@@ -68,7 +73,6 @@
     "@fortawesome/fontawesome-svg-core": "6.4.2",
     "@fortawesome/free-regular-svg-icons": "6.4.2",
     "@fortawesome/free-solid-svg-icons": "6.4.2",
-    "@fortawesome/vue-fontawesome": "3.0.3",
     "@types/bcryptjs": "^2.4.6",
     "@types/bootstrap": "~5.2.10",
     "@types/command-exists": "~1.2.3",
