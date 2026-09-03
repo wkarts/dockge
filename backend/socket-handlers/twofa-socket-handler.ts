@@ -88,8 +88,11 @@ export function registerTwoFAHandlers(socket: DockgeSocket, server: DockgeServer
                 throw new Error("Invalid 2FA token");
             }
 
-            await R.exec("UPDATE `user` SET twofa_status = 1, twofa_last_token = ? WHERE id = ?", [
-                clean,
+            // Do not mark the setup token as a login replay. The session is
+            // invalidated below, so allowing this current TOTP window for the
+            // first fresh login avoids forcing the administrator to wait up to
+            // 30 seconds after successfully enabling 2FA.
+            await R.exec("UPDATE `user` SET twofa_status = 1, twofa_last_token = NULL WHERE id = ?", [
                 user.id,
             ]);
             await bumpAuthRevision(user.id);
