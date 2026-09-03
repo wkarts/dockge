@@ -1,0 +1,117 @@
+name: 50 · Release SemVer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_bump:
+        description: Override opcional do incremento SemVer
+        required: false
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: dockge-release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip release]')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Validar fonte promovida
+        run: |
+          npm ci
+          npm run check-ts
+          npm run lint
+          npm run build:frontend
+      - name: Planejar SemVer
+        id: version
+        shell: bash
+        env:
+          FORCE_BUMP: ${{ inputs.force_bump || 'auto' }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          latest="$(git tag -l --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)"
+          current="${latest#v}"
+          [ -n "$current" ] || current="$(tr -d '[:space:]' < VERSION)"
+          bump="$FORCE_BUMP"
+          if [ "$bump" = auto ]; then
+            msg="$(git log -1 --pretty=%B)"
+            if grep -qiE 'BREAKING CHANGE|^[a-z]+!:' <<<"$msg"; then bump=major
+            elif grep -qiE '^feat(\(|:)' <<<"$msg"; then bump=minor
+            else bump=patch; fi
+          fi
+          IFS=. read -r major minor patch <<<"$current"
+          case "$bump" in
+            major) major=$((major+1)); minor=0; patch=0 ;;
+            minor) minor=$((minor+1)); patch=0 ;;
+            patch) patch=$((patch+1)) ;;
+            *) echo "bump inválido: $bump" >&2; exit 2 ;;
+          esac
+          next="$major.$minor.$patch"
+          if git rev-parse "v$next" >/dev/null 2>&1; then
+            echo "tag v$next já existe" >&2
+            exit 3
+          fi
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "tag=v$next" >> "$GITHUB_OUTPUT"
+      - name: Materializar versão
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          printf '%s\n' "$VERSION" > VERSION
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+      - name: Autenticar no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build e publicar imagem estável
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            -f docker/Dockerfile --target release \
+            -t "ghcr.io/$owner/dockge:$VERSION" \
+            -t "ghcr.io/$owner/dockge:latest" \
+            --provenance=true --sbom=true --push .
+      - name: Persistir versão oficial
+        id: persist
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add VERSION package.json package-lock.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): v$VERSION [skip release]"
+            git push origin HEAD:main
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Publicar GitHub Release estável
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_SHA: ${{ steps.persist.outputs.sha }}
+        run: gh release create "v$VERSION" --target "$RELEASE_SHA" --title "Dockge $VERSION" --generate-notes

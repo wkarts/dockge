@@ -1,0 +1,51 @@
+name: 20 · GHCR develop
+
+on:
+  pull_request:
+    branches: [develop]
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: dockge-develop-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Resolver metadados da imagem
+        id: meta
+        shell: bash
+        run: |
+          echo "short_sha=${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - name: Autenticar no GHCR
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build de teste em PR e publicação somente em develop
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: release
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
+          tags: |
+            ghcr.io/${{ steps.meta.outputs.owner }}/dockge:develop
+            ghcr.io/${{ steps.meta.outputs.owner }}/dockge:develop-${{ steps.meta.outputs.short_sha }}
+          provenance: true
+          sbom: true

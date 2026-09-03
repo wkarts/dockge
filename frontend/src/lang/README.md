@@ -1,19 +1,22 @@
 # Translations
 
-A simple guide on how to translate `Dockge` in your native language.
+Guia para tradução do Dockge independente mantido em `wkarts/dockge`.
 
-## How to Translate
+## Atualizar uma tradução existente
 
-(11-26-2023) Updated
+1. Crie uma branch a partir de `develop`.
+2. Altere apenas os arquivos necessários em `frontend/src/lang/`.
+3. Preserve as mesmas chaves existentes em `en.json`.
+4. Execute as validações do projeto.
+5. Abra Pull Request para `develop`.
 
-1. Go to <https://weblate.kuma.pet>
-2. Register an account on Weblate
-3. Make sure your GitHub email is matched with Weblate's account, so that it could show you as a contributor on GitHub
-4. Choose your language on Weblate and start translating.
+## Adicionar um novo idioma
 
-## How to add a new language in the dropdown
+1. Crie o arquivo de idioma em `frontend/src/lang/` usando `en.json` como referência.
+2. Adicione o código/descrição do idioma em `languageList` de `frontend/src/i18n.ts`.
+3. Garanta que nenhuma chave obrigatória ficou ausente.
+4. Abra PR para `develop`.
 
-1. Add your Language at <https://weblate.kuma.pet/projects/dockge/dockge/>.
-2. Find the language code (You can find it at the end of the URL)
-3. Add your language at the end of `languageList` in `frontend/src/i18n.ts`, format: `"zh-TW": "繁體中文 (台灣)"`,
-4. Commit to new branch and make a new Pull Request for me to approve.
+## Governança
+
+Este projeto não depende do serviço de tradução ou repositório do projeto de origem. Ferramentas externas de localização poderão ser integradas futuramente apenas quando configuradas para `wkarts/dockge`.

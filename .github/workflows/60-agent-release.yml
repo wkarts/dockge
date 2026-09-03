@@ -1,0 +1,179 @@
+name: 60 · Agent Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versão SemVer do Agent, sem prefixo (ex.: 0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: infrastructure-agent-release
+  cancel-in-progress: false
+
+env:
+  AGENT_VERSION: ${{ inputs.version }}
+
+jobs:
+  validate:
+    name: Validar release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Exigir main e SemVer válido
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REF" = 'refs/heads/main' ] || { echo 'O release do Agent deve ser disparado a partir de main.' >&2; exit 2; }
+          [[ "$AGENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Versão inválida.' >&2; exit 3; }
+          file_version="$(tr -d '[:space:]' < infrastructure-agent/VERSION)"
+          [ "$file_version" = "$AGENT_VERSION" ] || { echo "VERSION=$file_version difere do release solicitado=$AGENT_VERSION" >&2; exit 4; }
+          git rev-parse "infrastructure-agent-v$AGENT_VERSION" >/dev/null 2>&1 && { echo 'Tag já existe.' >&2; exit 5; } || true
+
+  linux:
+    needs: validate
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: infrastructure-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache-dependency-path: infrastructure-agent/go.sum
+      - run: go test ./...
+      - run: sudo apt-get update && sudo apt-get install -y rpm
+      - name: Build e pacotes Linux
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bin dist/packages
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/wkarts/infrastructure-agent/internal/version.Version=$AGENT_VERSION" -o "dist/bin/infra-agent-linux-$arch" ./cmd/infra-agent
+            chmod +x "dist/bin/infra-agent-linux-$arch"
+            ./scripts/package-deb.sh "$arch"
+            ./scripts/package-rpm.sh "$arch"
+          done
+          sha256sum dist/bin/* dist/packages/* > dist/SHA256SUMS-linux.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-release-linux
+          path: |
+            infrastructure-agent/dist/bin/*
+            infrastructure-agent/dist/packages/*
+            infrastructure-agent/dist/SHA256SUMS-linux.txt
+          if-no-files-found: error
+
+  windows:
+    needs: validate
+    runs-on: windows-2025
+    defaults:
+      run:
+        working-directory: infrastructure-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache-dependency-path: infrastructure-agent/go.sum
+      - run: go test ./...
+      - name: Build Windows amd64/arm64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force dist/bin, dist/packages | Out-Null
+          foreach ($arch in @('amd64','arm64')) {
+            $env:GOOS = 'windows'; $env:GOARCH = $arch; $env:CGO_ENABLED = '0'
+            go build -trimpath -ldflags "-s -w -X github.com/wkarts/infrastructure-agent/internal/version.Version=$env:AGENT_VERSION" -o "dist/bin/infra-agent-windows-$arch.exe" ./cmd/infra-agent
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - run: choco install innosetup --yes --no-progress
+      - name: Gerar Setup Windows amd64/arm64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $iscc = "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw 'ISCC.exe não encontrado' }
+          & $iscc "/DMyAppVersion=$env:AGENT_VERSION" "/DMyAppArch=amd64" "/DMySourceDir=dist\bin" packaging/windows/installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $iscc "/DMyAppVersion=$env:AGENT_VERSION" "/DMySourceDir=dist\bin" packaging/windows/installer-arm64.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-FileHash -Algorithm SHA256 dist/bin/*.exe, dist/packages/*.exe | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } | Set-Content dist/SHA256SUMS-windows.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-release-windows
+          path: |
+            infrastructure-agent/dist/bin/*.exe
+            infrastructure-agent/dist/packages/*.exe
+            infrastructure-agent/dist/SHA256SUMS-windows.txt
+          if-no-files-found: error
+
+  macos:
+    needs: validate
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: infrastructure-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache-dependency-path: infrastructure-agent/go.sum
+      - run: go test ./...
+      - name: Build e PKG macOS
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bin dist/packages
+          for arch in amd64 arm64; do
+            GOOS=darwin GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/wkarts/infrastructure-agent/internal/version.Version=$AGENT_VERSION" -o "dist/bin/infra-agent-darwin-$arch" ./cmd/infra-agent
+          done
+          chmod +x dist/bin/infra-agent-darwin-*
+          ./packaging/macos/build-pkg.sh x86_64
+          ./packaging/macos/build-pkg.sh arm64
+          shasum -a 256 dist/bin/* dist/packages/*.pkg > dist/SHA256SUMS-macos.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-release-macos
+          path: |
+            infrastructure-agent/dist/bin/*
+            infrastructure-agent/dist/packages/*.pkg
+            infrastructure-agent/dist/SHA256SUMS-macos.txt
+          if-no-files-found: error
+
+  release:
+    name: Publicar GitHub Release
+    needs: [validate, linux, windows, macos]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: agent-release-*
+          path: release-assets
+          merge-multiple: true
+      - name: Consolidar checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          find release-assets -maxdepth 1 -type f ! -name 'SHA256SUMS-*' -print0 | sort -z | xargs -0 sha256sum > release-assets/SHA256SUMS.txt
+      - name: Criar tag e release estável
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="infrastructure-agent-v$AGENT_VERSION"
+          git tag "$tag" "$GITHUB_SHA"
+          git push origin "$tag"
+          gh release create "$tag" release-assets/* --target "$GITHUB_SHA" --title "Generic Infrastructure Agent $AGENT_VERSION" --generate-notes

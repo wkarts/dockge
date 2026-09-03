@@ -1,4 +1,4 @@
-# Should be identical to .gitignore
+# Runtime/local state
 .env
 node_modules
 .idea
@@ -7,11 +7,12 @@ stacks
 tmp
 /private
 
-# Docker extra
-docker
-frontend
+# Repository/build metadata not needed in images
 .editorconfig
 .eslintrc.cjs
 .git
 .gitignore
 README.md
+infrastructure-agent/dist
+
+# O frontend NÃO é ignorado: o Dockerfile constrói frontend-dist internamente.

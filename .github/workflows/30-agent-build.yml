@@ -1,0 +1,153 @@
+name: 30 · Agent Build
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - 'infrastructure-agent/**'
+      - '.github/workflows/30-agent-build.yml'
+      - '.github/workflows/60-agent-release.yml'
+  push:
+    branches: [develop, main]
+    paths:
+      - 'infrastructure-agent/**'
+      - '.github/workflows/30-agent-build.yml'
+      - '.github/workflows/60-agent-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infrastructure-agent-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux · binário + DEB + RPM
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: infrastructure-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache-dependency-path: infrastructure-agent/go.sum
+      - name: Testes
+        run: go test ./...
+      - name: Dependências de empacotamento
+        run: sudo apt-get update && sudo apt-get install -y rpm
+      - name: Build Linux amd64/arm64
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bin dist/packages
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/wkarts/infrastructure-agent/internal/version.Version=$VERSION" -o "dist/bin/infra-agent-linux-$arch" ./cmd/infra-agent
+            chmod +x "dist/bin/infra-agent-linux-$arch"
+            ./scripts/package-deb.sh "$arch"
+            ./scripts/package-rpm.sh "$arch"
+          done
+          sha256sum dist/bin/* dist/packages/* > dist/SHA256SUMS-linux.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: infrastructure-agent-linux
+          path: |
+            infrastructure-agent/dist/bin/infra-agent-linux-*
+            infrastructure-agent/dist/packages/*.deb
+            infrastructure-agent/dist/packages/*.rpm
+            infrastructure-agent/dist/SHA256SUMS-linux.txt
+          if-no-files-found: error
+
+  windows:
+    name: Windows · EXE + Setup amd64/arm64
+    runs-on: windows-2025
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: infrastructure-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache-dependency-path: infrastructure-agent/go.sum
+      - name: Testes
+        run: go test ./...
+      - name: Build Windows amd64/arm64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content VERSION -Raw).Trim()
+          New-Item -ItemType Directory -Force dist/bin, dist/packages | Out-Null
+          foreach ($arch in @('amd64','arm64')) {
+            $env:GOOS = 'windows'
+            $env:GOARCH = $arch
+            $env:CGO_ENABLED = '0'
+            go build -trimpath -ldflags "-s -w -X github.com/wkarts/infrastructure-agent/internal/version.Version=$version" -o "dist/bin/infra-agent-windows-$arch.exe" ./cmd/infra-agent
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Instalar Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - name: Gerar Setup Windows amd64/arm64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content VERSION -Raw).Trim()
+          $iscc = "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw 'ISCC.exe não encontrado' }
+          & $iscc "/DMyAppVersion=$version" "/DMyAppArch=amd64" "/DMySourceDir=dist\bin" packaging/windows/installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $iscc "/DMyAppVersion=$version" "/DMySourceDir=dist\bin" packaging/windows/installer-arm64.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-FileHash -Algorithm SHA256 dist/bin/*.exe, dist/packages/*.exe | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } | Set-Content dist/SHA256SUMS-windows.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: infrastructure-agent-windows
+          path: |
+            infrastructure-agent/dist/bin/infra-agent-windows-*.exe
+            infrastructure-agent/dist/packages/*.exe
+            infrastructure-agent/dist/SHA256SUMS-windows.txt
+          if-no-files-found: error
+
+  macos:
+    name: macOS · binário + PKG
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: infrastructure-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache-dependency-path: infrastructure-agent/go.sum
+      - name: Testes
+        run: go test ./...
+      - name: Build macOS Intel/Apple Silicon e PKG
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          mkdir -p dist/bin dist/packages
+          for arch in amd64 arm64; do
+            GOOS=darwin GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/wkarts/infrastructure-agent/internal/version.Version=$VERSION" -o "dist/bin/infra-agent-darwin-$arch" ./cmd/infra-agent
+          done
+          chmod +x dist/bin/infra-agent-darwin-*
+          ./packaging/macos/build-pkg.sh x86_64
+          ./packaging/macos/build-pkg.sh arm64
+          shasum -a 256 dist/bin/* dist/packages/*.pkg > dist/SHA256SUMS-macos.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: infrastructure-agent-macos
+          path: |
+            infrastructure-agent/dist/bin/infra-agent-darwin-*
+            infrastructure-agent/dist/packages/*.pkg
+            infrastructure-agent/dist/SHA256SUMS-macos.txt
+          if-no-files-found: error

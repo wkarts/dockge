@@ -1,14 +1,45 @@
-name: 🚀 Feature Request (Please go to the "Discussions" tab to submit a Feature Request)
-description: "⚠️ Please go to the \"Discussions\" tab to submit a Feature Request"
+name: "🚀 Feature Request"
+description: "Sugira uma evolução para wkarts/dockge"
+labels: [feature-request]
 body:
-  - type: markdown
-    attributes:
-      value: |
-        ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ ⚠️  Please go to https://github.com/louislam/dockge/discussions/new?category=ask-for-help
   - type: checkboxes
-    id: no-duplicate-issues
+    id: duplicate
     attributes:
-      label: "Issues are for bug reports only, please go to the \"Discussions\" tab to submit a Feature Request"
+      label: "⚠️ Verificação"
       options:
-        - label: "I understand"
+        - label: "Pesquisei no repositório e não encontrei proposta equivalente"
           required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Área"
+      options:
+        - API / Automation
+        - Generic Infrastructure Agent
+        - Docker / Compose
+        - UI / UX
+        - Security
+        - CI / Release / GHCR
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: "Problema / necessidade"
+      description: "Descreva o problema antes da solução."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "Proposta"
+      description: "Descreva o comportamento desejado."
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: "Contexto adicional"
+    validations:
+      required: false

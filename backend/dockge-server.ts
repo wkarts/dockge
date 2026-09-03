@@ -87,7 +87,7 @@ export class DockgeServer {
         // Catch unexpected errors here
         let unexpectedErrorHandler = (error : unknown) => {
             console.trace(error);
-            console.error("If you keep encountering errors, please report to https://github.com/louislam/dockge");
+            console.error("If you keep encountering errors, please report to https://github.com/wkarts/dockge");
         };
         process.addListener("unhandledRejection", unexpectedErrorHandler);
         process.addListener("uncaughtException", unexpectedErrorHandler);
@@ -643,7 +643,7 @@ export class DockgeServer {
         try {
             let res = await childProcessAsync.spawn("docker", [ "stats", "--format", "json", "--no-stream" ], {
                 encoding: "utf-8",
-            });
+        });
 
             if (!res.stdout) {
                 return stats;
