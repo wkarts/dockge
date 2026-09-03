@@ -31,7 +31,7 @@
     "build:docker-develop": "docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/wkarts/dockge:develop --target release -f ./docker/Dockerfile . --push",
     "build:healthcheck": "docker buildx build -f docker/BuildHealthCheck.Dockerfile --platform linux/amd64,linux/arm64 -t ghcr.io/wkarts/dockge:build-healthcheck . --push",
     "start-docker": "docker run --rm -p 5001:5001 --name dockge ghcr.io/wkarts/dockge:latest",
-    "api-token:create": "node ./extra/generate-api-token.mjs",
+    "api-token:create": "tsx ./extra/generate-api-token.ts",
     "reformat-changelog": "tsx ./extra/reformat-changelog.ts",
     "reset-password": "tsx ./extra/reset-password.ts",
     "reset-2fa": "tsx ./extra/reset-2fa.ts"
