@@ -34,6 +34,11 @@ func allowed(name string, prefixes []string) bool {
     return false
 }
 
+func (r Runner) inventory() model.Inventory {
+    credential, _ := securefile.Read(r.Config.Dockge.CredentialFile)
+    return inventory.Collect(r.Config.Labels, r.Config.Dockge.BaseURL, credential)
+}
+
 func (r Runner) controller(ctl config.Controller) (*controlplane.Client, string, error) {
     credential, err := securefile.Read(ctl.CredentialFile)
     if err != nil {
@@ -47,7 +52,7 @@ func (r Runner) controller(ctl config.Controller) (*controlplane.Client, string,
 }
 
 func (r Runner) Enroll(ctx context.Context) error {
-    inv := inventory.Collect(r.Config.Labels, r.Config.Dockge.BaseURL)
+    inv := r.inventory()
     var errs []error
 
     for _, ctl := range r.Config.Controllers {
@@ -137,7 +142,7 @@ func (r Runner) execute(ctx context.Context, ctl config.Controller, action model
 }
 
 func (r Runner) Once(ctx context.Context) error {
-    inv := inventory.Collect(r.Config.Labels, r.Config.Dockge.BaseURL)
+    inv := r.inventory()
     actionJournal, err := journal.Open(filepath.Join(r.Config.DataDir, "action-journal.json"))
     if err != nil {
         return fmt.Errorf("open action journal: %w", err)
