@@ -1,23 +1,17 @@
 <template>
     <div>
-        <h1 v-show="show" class="mb-3">
-            {{ $t("Settings") }}
-        </h1>
+        <h1 v-show="show" class="mb-3">{{ $t("Settings") }}</h1>
 
         <div class="shadow-box shadow-box-settings">
             <div class="row">
                 <div v-if="showSubMenu" class="settings-menu col-lg-3 col-md-5">
-                    <router-link
-                        v-for="(item, key) in subMenus"
-                        :key="key"
-                        :to="`/settings/${key}`"
-                    >
+                    <router-link v-for="(item, key) in subMenus" :key="key" :to="`/settings/${key}`">
                         <div class="menu-item">
+                            <font-awesome-icon v-if="item.icon" :icon="item.icon" class="me-2" />
                             {{ item.title }}
                         </div>
                     </router-link>
 
-                    <!-- Logout Button -->
                     <a v-if="$root.isMobile && $root.loggedIn && $root.socket.token !== 'autoLogin'" class="logout" @click.prevent="$root.logout">
                         <div class="menu-item">
                             <font-awesome-icon icon="sign-out-alt" />
@@ -26,7 +20,7 @@
                     </a>
                 </div>
                 <div class="settings-content col-lg-9 col-md-7">
-                    <div v-if="currentPage" class="settings-content-header">
+                    <div v-if="currentPage && subMenus[currentPage]" class="settings-content-header">
                         {{ subMenus[currentPage].title }}
                     </div>
                     <div class="mx-3">
@@ -56,38 +50,41 @@ export default {
 
     computed: {
         currentPage() {
-            let pathSplit = useRoute().path.split("/");
-            let pathEnd = pathSplit[pathSplit.length - 1];
-            if (!pathEnd || pathEnd === "settings") {
-                return null;
-            }
+            const pathSplit = useRoute().path.split("/");
+            const pathEnd = pathSplit[pathSplit.length - 1];
+            if (!pathEnd || pathEnd === "settings") return null;
             return pathEnd;
         },
 
         showSubMenu() {
-            if (this.$root.isMobile) {
-                return !this.currentPage;
-            } else {
-                return true;
-            }
+            return this.$root.isMobile ? !this.currentPage : true;
         },
 
         subMenus() {
             return {
                 general: {
                     title: this.$t("general"),
+                    icon: "sliders",
                 },
                 appearance: {
                     title: this.$t("Appearance"),
+                    icon: "palette",
                 },
                 security: {
                     title: this.$t("Security"),
+                    icon: "shield-halved",
+                },
+                apiAccess: {
+                    title: "API Access",
+                    icon: "key",
                 },
                 globalEnv: {
                     title: this.$t("GlobalEnv"),
+                    icon: "file-code",
                 },
                 about: {
                     title: this.$t("About"),
+                    icon: "circle-info",
                 },
             };
         },
@@ -105,20 +102,18 @@ export default {
     },
 
     methods: {
-
-        /**
-         * Load the general settings page
-         * For desktop only, on mobile do nothing
-         */
         loadGeneralPage() {
             if (!this.currentPage && !this.$root.isMobile) {
                 this.$router.push("/settings/appearance");
             }
         },
 
-        /** Load settings from server */
         loadSettings() {
             this.$root.getSocket().emit("getSettings", (res) => {
+                if (!res?.ok) {
+                    this.$root.toastRes(res);
+                    return;
+                }
                 this.settings = res.data;
                 if (this.settings.checkUpdate === undefined) {
                     this.settings.checkUpdate = true;
@@ -127,37 +122,21 @@ export default {
             });
         },
 
-        /**
-         * Callback for saving settings
-         * @callback saveSettingsCB
-         * @param {Object} res Result of operation
-         */
-
-        /**
-         * Save Settings
-         * @param {saveSettingsCB} [callback]
-         * @param {string} [currentPassword] Only need for disableAuth to true
-         */
         saveSettings(callback, currentPassword) {
-            let valid = this.validateSettings();
-            if (valid.success) {
-                this.$root.getSocket().emit("setSettings", this.settings, currentPassword, (res) => {
-                    this.$root.toastRes(res);
-                    this.loadSettings();
-
-                    if (callback) {
-                        callback();
-                    }
-                });
-            } else {
+            const valid = this.validateSettings();
+            if (!valid.success) {
                 this.$root.toastError(valid.msg);
+                return;
             }
+
+            this.$root.getSocket().emit("setSettings", this.settings, currentPassword, (res) => {
+                this.$root.toastRes(res);
+                if (!res?.ok) return;
+                this.loadSettings();
+                if (callback) callback();
+            });
         },
 
-        /**
-         * Ensure settings are valid
-         * @returns {Object} Contains success state and error msg
-         */
         validateSettings() {
             if (this.settings.keepDataPeriodDays < 0) {
                 return {
@@ -165,10 +144,7 @@ export default {
                     msg: this.$t("dataRetentionTimeError"),
                 };
             }
-            return {
-                success: true,
-                msg: "",
-            };
+            return { success: true, msg: "" };
         },
     }
 };
@@ -180,14 +156,6 @@ export default {
 .shadow-box-settings {
     padding: 20px;
     min-height: calc(100vh - 155px);
-}
-
-footer {
-    color: #aaa;
-    font-size: 13px;
-    margin-top: 20px;
-    padding-bottom: 30px;
-    text-align: center;
 }
 
 .settings-menu {
