@@ -18,7 +18,19 @@ import (
 )
 
 func collectInventory(cfg config.Config) model.Inventory {
-    credential, _ := securefile.Read(cfg.Dockge.CredentialFile)
+    credential := ""
+    for _, ctl := range cfg.Controllers {
+        if ctl.DockgeCredentialFile == "" {
+            continue
+        }
+        if value, err := securefile.Read(ctl.DockgeCredentialFile); err == nil && value != "" {
+            credential = value
+            break
+        }
+    }
+    if credential == "" && cfg.Dockge.CredentialFile != "" {
+        credential, _ = securefile.Read(cfg.Dockge.CredentialFile)
+    }
     return inventory.Collect(cfg.Labels, cfg.Dockge.BaseURL, credential)
 }
 
