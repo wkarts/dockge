@@ -1,16 +1,23 @@
 {
+  "version": 1,
   "tokens": [
     {
+      "id": "00000000-0000-0000-0000-000000000001",
       "name": "pige360-control-plane",
       "sha256": "REPLACE_WITH_SHA256_OF_RANDOM_TOKEN",
       "scopes": ["server:read", "stacks:read", "stacks:write", "stacks:operate"],
-      "stackPrefixes": ["pige360-"]
+      "stackPrefixes": ["pige360-"],
+      "disabled": false,
+      "createdAt": "2026-09-03T00:00:00.000Z"
     },
     {
+      "id": "00000000-0000-0000-0000-000000000002",
       "name": "connect-api-control-plane",
       "sha256": "REPLACE_WITH_SHA256_OF_ANOTHER_RANDOM_TOKEN",
       "scopes": ["server:read", "stacks:read", "stacks:write", "stacks:operate"],
-      "stackPrefixes": ["connect-api-"]
+      "stackPrefixes": ["connect-api-"],
+      "disabled": false,
+      "createdAt": "2026-09-03T00:00:00.000Z"
     }
   ]
 }
