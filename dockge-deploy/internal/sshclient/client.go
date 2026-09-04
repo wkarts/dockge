@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
@@ -64,12 +65,23 @@ func hostKeyCallback(path string, acceptNew bool) (ssh.HostKeyCallback, error) {
 		if !errors.As(err, &keyErr) {
 			return err
 		}
+		fingerprint := ssh.FingerprintSHA256(key)
 		if len(keyErr.Want) > 0 {
-			return fmt.Errorf("SSH host key changed for %s; refusing connection", hostname)
+			return fmt.Errorf(
+				"SSH host key changed for %s; received fingerprint %s; refusing connection",
+				hostname,
+				fingerprint,
+			)
 		}
 		if !acceptNew {
-			return fmt.Errorf("unknown SSH host key for %s; verify fingerprint and rerun with --accept-new-host-key: %w", hostname, err)
+			return fmt.Errorf(
+				"unknown SSH host key for %s; fingerprint %s; verify it out-of-band and rerun with --accept-new-host-key: %w",
+				hostname,
+				fingerprint,
+				err,
+			)
 		}
+		fmt.Fprintf(os.Stderr, "Trusting new SSH host key for %s: %s\n", hostname, fingerprint)
 		line := knownhosts.Line([]string{hostname}, key) + "\n"
 		file, openErr := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
 		if openErr != nil {
@@ -83,27 +95,50 @@ func hostKeyCallback(path string, acceptNew bool) (ssh.HostKeyCallback, error) {
 	}, nil
 }
 
-func authMethods(cfg Config) ([]ssh.AuthMethod, error) {
+func authMethods(cfg Config) ([]ssh.AuthMethod, func(), error) {
 	var methods []ssh.AuthMethod
+	var agentConn net.Conn
+	cleanup := func() {
+		if agentConn != nil {
+			_ = agentConn.Close()
+		}
+	}
+
 	if cfg.KeyPath != "" {
 		keyPath := expandHome(cfg.KeyPath)
 		if data, err := os.ReadFile(keyPath); err == nil {
 			signer, err := ssh.ParsePrivateKey(data)
 			if err != nil {
-				return nil, fmt.Errorf("parse SSH private key %s: %w", keyPath, err)
+				cleanup()
+				return nil, func() {}, fmt.Errorf("parse SSH private key %s: %w", keyPath, err)
 			}
 			methods = append(methods, ssh.PublicKeys(signer))
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("read SSH private key %s: %w", keyPath, err)
+			cleanup()
+			return nil, func() {}, fmt.Errorf("read SSH private key %s: %w", keyPath, err)
 		}
 	}
+
+	// OpenSSH-compatible agents exposed through SSH_AUTH_SOCK are consumed
+	// automatically. Keep the socket open until ssh.NewClientConn completes,
+	// because signer discovery happens during the handshake.
+	if socket := os.Getenv("SSH_AUTH_SOCK"); socket != "" {
+		conn, err := net.DialTimeout("unix", socket, cfg.Timeout)
+		if err == nil {
+			agentConn = conn
+			agentClient := agent.NewClient(conn)
+			methods = append(methods, ssh.PublicKeysCallback(agentClient.Signers))
+		}
+	}
+
 	if cfg.Password != "" {
 		methods = append(methods, ssh.Password(cfg.Password))
 	}
 	if len(methods) == 0 {
-		return nil, errors.New("no SSH authentication available; provide --key or DOCKGE_DEPLOY_SSH_PASSWORD")
+		cleanup()
+		return nil, func() {}, errors.New("no SSH authentication available; provide --key, an SSH_AUTH_SOCK agent, or DOCKGE_DEPLOY_SSH_PASSWORD")
 	}
-	return methods, nil
+	return methods, cleanup, nil
 }
 
 func Dial(cfg Config) (*Client, error) {
@@ -123,10 +158,12 @@ func Dial(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	auth, err := authMethods(cfg)
+	auth, cleanupAuth, err := authMethods(cfg)
 	if err != nil {
 		return nil, err
 	}
+	defer cleanupAuth()
+
 	addr := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Port))
 	conn, err := net.DialTimeout("tcp", addr, cfg.Timeout)
 	if err != nil {
