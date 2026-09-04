@@ -60,10 +60,10 @@ Isso evita que uma atualização somente do `compose.yaml` destrua credenciais o
 `PUT`, `DELETE` e `POST` de operação aceitam o header:
 
 ```http
-Idempotency-Key: act-001
+Idempotency-Key: op-001
 ```
 
-O Generic Infrastructure Agent 0.2+ envia o próprio `action.id` como chave. Clientes externos podem usar a mesma proteção.
+Clientes externos, incluindo o Dockge Manager, devem gerar uma chave única por intenção mutante e reutilizá-la somente ao repetir exatamente a mesma requisição após falha de transporte.
 
 Regras:
 
@@ -72,7 +72,7 @@ Regras:
 3. uma execução concluída é retornada como replay sem repetir Docker/Compose; a resposta inclui `X-Idempotency-Replayed: true`;
 4. reutilizar a mesma chave com método, rota ou payload diferente retorna `409 idempotency_key_reused_with_different_request`;
 5. se o processo cair depois da reserva e antes de persistir o resultado, uma nova chamada com a mesma chave retorna `409 idempotency_result_in_doubt` e **não** executa automaticamente a mutação novamente;
-6. nesse estado indeterminado, o Control Plane deve reconciliar o estado atual e emitir um novo `action.id` somente se uma nova execução for realmente necessária.
+6. nesse estado indeterminado, o cliente deve reconciliar o estado atual antes de decidir se uma nova execução, com outra chave, é realmente necessária.
 
 O store é configurado por `DOCKGE_API_IDEMPOTENCY_FILE` e deve permanecer no volume persistente de dados. O formato não grava em texto claro o `Idempotency-Key` nem o identificador do principal; usa hashes para a chave de armazenamento e para o fingerprint da requisição.
 
@@ -86,6 +86,6 @@ Arquivos persistentes recomendados no Compose API-first:
 - `DOCKGE_API_AUDIT_FILE=/app/data/api-audit.jsonl`
 - `DOCKGE_API_IDEMPOTENCY_FILE=/app/data/api-idempotency.json`
 
-## Política comercial
+## Política externa
 
-Licenciamento, inadimplência, autorização de upgrade, janela de manutenção e obrigação de backup pertencem ao **Control Plane consumidor**. O Dockge recebe uma ação técnica já autorizada e não implementa regra comercial de produto.
+Licenciamento, inadimplência, autorização de upgrade, janela de manutenção e obrigação de backup pertencem ao sistema consumidor, não ao Dockge Core. O Dockge recebe uma ação técnica já autorizada e não implementa regra comercial de produto.

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Dockge Manager">
+  <rect width="128" height="128" rx="28" fill="#ffffff"/>
+  <path d="M24 37h32c22 0 39 11 39 27S78 91 56 91H24V37Zm24 15v24h9c12 0 20-4 20-12s-8-12-20-12h-9Z" fill="#1f6feb"/>
+  <path d="M82 36h22v56H82V80h8V48h-8V36Z" fill="#12b76a"/>
+</svg>
