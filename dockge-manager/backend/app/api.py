@@ -212,7 +212,7 @@ def update_target(target_id: str, body: TargetUpdate, db: Db, user: CurrentUser)
     return target
 
 
-@router.delete("/targets/{target_id}", status_code=204)
+@router.delete("/targets/{target_id}", status_code=204, response_model=None)
 def delete_target(target_id: str, db: Db, user: CurrentUser) -> None:
     target = target_or_404(db, target_id)
     credential = target.credential
