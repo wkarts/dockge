@@ -56,3 +56,22 @@ def test_target_secret_is_not_returned_or_stored_plaintext() -> None:
         credential = db.scalar(select(CredentialRef).where(CredentialRef.name.like("dockge:test-target:%")))
         assert credential is not None
         assert secret not in credential.secret_ciphertext
+
+
+def test_delete_target_returns_empty_204() -> None:
+    with TestClient(app) as client:
+        headers = login(client)
+        created = client.post(
+            "/api/v1/targets",
+            headers=headers,
+            json={
+                "name": "delete-target",
+                "base_url": "http://127.0.0.1:59998",
+                "token": "abcdef0123456789abcdef0123456789",
+                "verify_tls": False,
+            },
+        )
+        assert created.status_code == 201
+        deleted = client.delete(f"/api/v1/targets/{created.json()['id']}", headers=headers)
+        assert deleted.status_code == 204
+        assert deleted.content == b""
