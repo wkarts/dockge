@@ -1,0 +1,23 @@
+package remote
+
+const ComposeYAML = `services:
+  dockge:
+    image: ${DOCKGE_IMAGE:-ghcr.io/wkarts/dockge}:${DOCKGE_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - ${DOCKGE_BIND_HOST:-127.0.0.1}:${DOCKGE_PORT:-5001}:5001
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKGE_DATA_PATH:-./data}:/app/data
+      - ${DOCKGE_STACKS_PATH:-/opt/stacks}:${DOCKGE_STACKS_PATH:-/opt/stacks}
+    environment:
+      DOCKGE_STACKS_DIR: ${DOCKGE_STACKS_PATH:-/opt/stacks}
+      DOCKGE_API_TOKENS_FILE: ${DOCKGE_API_TOKENS_FILE:-/app/data/api-tokens.json}
+      DOCKGE_API_AUDIT_FILE: ${DOCKGE_API_AUDIT_FILE:-/app/data/api-audit.jsonl}
+      DOCKGE_API_IDEMPOTENCY_FILE: ${DOCKGE_API_IDEMPOTENCY_FILE:-/app/data/api-idempotency.json}
+      DOCKGE_ENABLE_CONSOLE: ${DOCKGE_ENABLE_CONSOLE:-false}
+      DOCKGE_ALLOW_DISABLE_AUTH: ${DOCKGE_ALLOW_DISABLE_AUTH:-false}
+      DOCKGE_TOTP_ISSUER: ${DOCKGE_TOTP_ISSUER:-Dockge}
+    security_opt:
+      - no-new-privileges:true
+`

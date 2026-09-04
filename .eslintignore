@@ -1,0 +1,3 @@
+# Independent ecosystem products have their own toolchains/CI.
+dockge-manager/**
+dockge-deploy/**
