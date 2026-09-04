@@ -17,7 +17,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: dockge-agent-assets-${{ github.ref }}
+  group: dockge-agent-assets-v2-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
