@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { writePrivateFileAtomic } from "./stack-file-store";
 
-const MAX_ENTRIES = 2048;
+const MAX_COMPLETED_ENTRIES = 2048;
 const MAX_KEY_LENGTH = 200;
 const keyPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/;
 
@@ -54,9 +54,18 @@ function readStore(): FileFormat {
 }
 
 function writeStore(value: FileFormat): void {
-    const entries = [...value.entries]
+    // Nunca podar uma reserva sem resultado: removê-la permitiria repetir uma
+    // mutação cujo desfecho pode ser desconhecido. Somente resultados já
+    // concluídos são compactados para limitar crescimento do arquivo.
+    const started = value.entries
+        .filter((entry) => entry.state === "started")
+        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    const completed = value.entries
+        .filter((entry) => entry.state === "completed")
         .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-        .slice(0, MAX_ENTRIES);
+        .slice(0, MAX_COMPLETED_ENTRIES);
+    const entries = [...started, ...completed];
+
     writePrivateFileAtomic(storePath(), JSON.stringify({ version: 1, entries }, null, 2) + "\n");
 }
 
