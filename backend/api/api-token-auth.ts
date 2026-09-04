@@ -9,12 +9,14 @@ import {
     normalizeHash,
     readTokenFile,
     tokenFilePath,
+    tokenRecordID,
 } from "./api-token-store";
 
 export type { ApiScope, ApiTokenRecord } from "./api-token-store";
 export { hashToken, tokenFilePath } from "./api-token-store";
 
 export interface ApiPrincipal {
+    id: string;
     name: string;
     scopes: Set<ApiScope>;
     stackPrefixes: string[];
@@ -45,6 +47,7 @@ export function apiAuth(requiredScope?: ApiScope) {
             if (!record) return res.status(401).json({ error: "invalid_or_expired_token" });
 
             const principal: ApiPrincipal = {
+                id: tokenRecordID(record),
                 name: record.name,
                 scopes: new Set(record.scopes || []),
                 stackPrefixes: [...new Set(record.stackPrefixes || [])],
@@ -87,6 +90,7 @@ export function audit(res: Response, action: string, target: string, outcome: st
             at: new Date().toISOString(),
             request_id: res.locals.requestId,
             principal: principal.name,
+            principal_id: principal.id,
             action,
             target,
             outcome,

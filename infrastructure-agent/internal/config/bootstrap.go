@@ -37,7 +37,7 @@ func ConfigureFromEnv(configPath string) (Config, error) {
 
     var previousBinding *Controller
     for i := range existing.Controllers {
-        if existing.Controllers[i].Name == name {
+        if strings.EqualFold(existing.Controllers[i].Name, name) {
             copy := existing.Controllers[i]
             previousBinding = &copy
             break
@@ -60,7 +60,21 @@ func ConfigureFromEnv(configPath string) (Config, error) {
     identityFile := filepath.Join(controllerDir, "agent.id")
     controllerDockgeCredentialFile := filepath.Join(controllerDir, "dockge.credential")
 
+    // A change of capitalization must update the same logical binding instead
+    // of creating another credential/identity set for the same Control Plane.
+    if previousBinding != nil {
+        if previousBinding.CredentialFile != "" {
+            credentialFile = previousBinding.CredentialFile
+        }
+        if previousBinding.AgentIdentityFile != "" {
+            identityFile = previousBinding.AgentIdentityFile
+        }
+    }
+
     if value := strings.TrimSpace(os.Getenv("INFRA_AGENT_ENROLLMENT_TOKEN")); value != "" {
+        if previousBinding != nil && previousBinding.EnrollmentFile != "" {
+            enrollmentFile = previousBinding.EnrollmentFile
+        }
         if err := securefile.Write(enrollmentFile, value); err != nil {
             return Config{}, err
         }
@@ -69,6 +83,9 @@ func ConfigureFromEnv(configPath string) (Config, error) {
     }
 
     if value := strings.TrimSpace(os.Getenv("INFRA_AGENT_DOCKGE_TOKEN")); value != "" {
+        if previousBinding != nil && previousBinding.DockgeCredentialFile != "" {
+            controllerDockgeCredentialFile = previousBinding.DockgeCredentialFile
+        }
         if err := securefile.Write(controllerDockgeCredentialFile, value); err != nil {
             return Config{}, err
         }
@@ -93,7 +110,7 @@ func ConfigureFromEnv(configPath string) (Config, error) {
     controllers := make([]Controller, 0, len(existing.Controllers)+1)
     replaced := false
     for _, current := range existing.Controllers {
-        if current.Name == name {
+        if strings.EqualFold(current.Name, name) {
             controllers = append(controllers, binding)
             replaced = true
         } else {

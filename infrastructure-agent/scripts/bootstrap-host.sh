@@ -195,6 +195,7 @@ services:
       DOCKGE_STACKS_DIR: $stacks_dir
       DOCKGE_API_TOKENS_FILE: /app/data/api-tokens.json
       DOCKGE_API_AUDIT_FILE: /app/data/api-audit.jsonl
+      DOCKGE_API_IDEMPOTENCY_FILE: /app/data/api-idempotency.json
       DOCKGE_ENABLE_CONSOLE: "false"
       DOCKGE_ALLOW_DISABLE_AUTH: "false"
       DOCKGE_TOTP_ISSUER: Dockge

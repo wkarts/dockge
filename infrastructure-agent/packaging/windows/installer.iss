@@ -1,12 +1,18 @@
 #define MyAppName "Generic Infrastructure Agent"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "0.2.0"
 #endif
 #ifndef MyAppArch
   #define MyAppArch "amd64"
 #endif
 #ifndef MySourceDir
   #define MySourceDir "."
+#endif
+#ifndef MyOutputDir
+  #define MyOutputDir "."
+#endif
+#ifndef MyPackagingDir
+  #define MyPackagingDir "."
 #endif
 
 [Setup]
@@ -20,7 +26,7 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-OutputDir=dist\packages
+OutputDir={#MyOutputDir}
 OutputBaseFilename=infrastructure-agent-setup-{#MyAppVersion}-windows-{#MyAppArch}
 Compression=lzma2
 SolidCompression=yes
@@ -29,10 +35,10 @@ UninstallDisplayName={#MyAppName}
 
 [Files]
 Source: "{#MySourceDir}\infra-agent-windows-{#MyAppArch}.exe"; DestDir: "{app}"; DestName: "infra-agent.exe"; Flags: ignoreversion
-Source: "packaging\windows\install-service.ps1"; DestDir: "{app}"; Flags: ignoreversion
-Source: "packaging\windows\configure-ui.ps1"; DestDir: "{app}"; Flags: ignoreversion
-Source: "packaging\windows\uninstall-service.ps1"; DestDir: "{app}"; Flags: ignoreversion
-Source: "packaging\windows\install.cmd"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MyPackagingDir}\install-service.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MyPackagingDir}\configure-ui.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MyPackagingDir}\uninstall-service.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MyPackagingDir}\install.cmd"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
 Name: "{commonappdata}\InfrastructureAgent"; Permissions: users-readexec

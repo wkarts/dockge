@@ -38,7 +38,15 @@ jobs:
         run: |
           set -euo pipefail
           patterns='github\.com/louislam/dockge|raw\.githubusercontent\.com/louislam/dockge|dockge\.kuma\.pet|hub\.docker\.com/r/louislam/dockge|louislam/dockge:'
-          if grep -RInE "$patterns" --exclude-dir=.git --exclude=LICENSE --exclude=package-lock.json .; then
+          operational_paths=(
+            README.md compose.yaml package.json
+            backend common frontend extra deploy docker infrastructure-agent
+            .github/workflows
+          )
+          if grep -RInE "$patterns" \
+            --exclude='00-ci.yml' \
+            --exclude='00-pr-bootstrap.yml' \
+            "${operational_paths[@]}"; then
             echo 'Referências operacionais ao projeto antigo ainda existem.' >&2
             exit 20
           fi

@@ -99,12 +99,33 @@ func Load(path string) (Config, error) {
     return cfg, nil
 }
 
+func normalizedSensitivePath(value string) string {
+    clean := filepath.Clean(strings.TrimSpace(value))
+    if runtime.GOOS == "windows" {
+        clean = strings.ToLower(clean)
+    }
+    return clean
+}
+
+func registerSensitivePath(seen map[string]string, value, label string) error {
+    if strings.TrimSpace(value) == "" {
+        return nil
+    }
+    normalized := normalizedSensitivePath(value)
+    if previous, exists := seen[normalized]; exists {
+        return fmt.Errorf("%s reuses sensitive file already assigned to %s; controller credentials and identities must be isolated", label, previous)
+    }
+    seen[normalized] = label
+    return nil
+}
+
 func (cfg Config) Validate() error {
     if len(cfg.Controllers) == 0 {
         return errors.New("at least one controller is required")
     }
 
     seenControllerNames := make(map[string]int, len(cfg.Controllers))
+    seenSensitivePaths := make(map[string]string, len(cfg.Controllers)*4)
     for i, ctl := range cfg.Controllers {
         name := strings.TrimSpace(ctl.Name)
         if name == "" || ctl.BaseURL == "" {
@@ -120,8 +141,10 @@ func (cfg Config) Validate() error {
         if err != nil || u.Host == "" {
             return fmt.Errorf("controllers[%d].base_url is invalid", i)
         }
-        if u.Scheme != "https" && !ctl.AllowInsecureHTTP {
-            return fmt.Errorf("controllers[%d] must use HTTPS", i)
+        if u.Scheme != "https" {
+            if !ctl.AllowInsecureHTTP || u.Scheme != "http" {
+                return fmt.Errorf("controllers[%d] must use HTTPS; HTTP requires allow_insecure_http=true", i)
+            }
         }
         if ctl.CredentialFile == "" || ctl.AgentIdentityFile == "" {
             return fmt.Errorf("controllers[%d] credential and identity files are required", i)
@@ -129,10 +152,29 @@ func (cfg Config) Validate() error {
         if len(ctl.AllowedDeployments) > 0 && ctl.DockgeCredentialFile == "" && cfg.Dockge.CredentialFile == "" {
             return fmt.Errorf("controllers[%d] needs a Dockge credential for deployment actions", i)
         }
+
+        sensitiveFiles := []struct {
+            value string
+            role  string
+        }{
+            {ctl.EnrollmentFile, "enrollment_file"},
+            {ctl.CredentialFile, "credential_file"},
+            {ctl.AgentIdentityFile, "agent_identity_file"},
+            {ctl.DockgeCredentialFile, "dockge_credential_file"},
+        }
+        for _, sensitive := range sensitiveFiles {
+            if err := registerSensitivePath(seenSensitivePaths, sensitive.value, fmt.Sprintf("controllers[%d].%s", i, sensitive.role)); err != nil {
+                return err
+            }
+        }
     }
+
     u, err := url.Parse(cfg.Dockge.BaseURL)
     if err != nil || u.Host == "" {
         return errors.New("dockge.base_url is invalid")
+    }
+    if u.Scheme != "http" && u.Scheme != "https" {
+        return errors.New("dockge.base_url must use HTTP or HTTPS")
     }
     host := strings.ToLower(u.Hostname())
     if !cfg.Dockge.AllowNonLoopback && host != "127.0.0.1" && host != "localhost" && host != "::1" {
