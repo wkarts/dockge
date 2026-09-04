@@ -33,7 +33,11 @@ jobs:
       - name: Test
         working-directory: dockge-deploy
         run: |
-          go mod download
+          set -euo pipefail
+          go mod tidy
+          echo '--- BEGIN dockge-deploy/go.sum ---'
+          cat go.sum
+          echo '--- END dockge-deploy/go.sum ---'
           go test ./...
           go vet ./...
       - name: Build all platforms
