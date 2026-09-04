@@ -50,7 +50,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ! grep -RIn '/var/run/docker.sock' dockge-manager
+          # A documentação pode mencionar docker.sock para explicar a proibição;
+          # runtime, compose, backend e frontend não podem depender dele.
+          ! grep -RIn '/var/run/docker.sock' \
+            dockge-manager/compose.yaml \
+            dockge-manager/Dockerfile \
+            dockge-manager/backend \
+            dockge-manager/frontend/src
           grep -RIn '/api/v1/automation' dockge-manager/README.md >/dev/null
       - name: Build image smoke test
         run: docker build -f dockge-manager/Dockerfile dockge-manager -t dockge-manager:test
