@@ -110,8 +110,24 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $iscc = "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { throw 'ISCC.exe não encontrado' }
+          $candidates = @(
+            (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+            (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'),
+            (Join-Path $env:ChocolateyInstall 'bin\ISCC.exe')
+          )
+          $iscc = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if (-not $iscc) {
+            $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+            if ($command) { $iscc = $command.Source }
+          }
+          if (-not $iscc) {
+            $chocoRoot = Join-Path $env:ChocolateyInstall 'lib\innosetup'
+            if (Test-Path $chocoRoot) {
+              $iscc = Get-ChildItem $chocoRoot -Filter ISCC.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName -First 1
+            }
+          }
+          if (-not $iscc) { throw 'ISCC.exe não encontrado após instalação do Inno Setup' }
+          Write-Host "Inno Setup compiler: $iscc"
           & $iscc "/DMyAppVersion=$env:AGENT_VERSION" "/DMyAppArch=amd64" "/DMySourceDir=dist\bin" packaging/windows/installer.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $iscc "/DMyAppVersion=$env:AGENT_VERSION" "/DMySourceDir=dist\bin" packaging/windows/installer-arm64.iss
