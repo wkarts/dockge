@@ -40,6 +40,7 @@ func (f *sshFlags) dial() (*sshclient.Client, error) {
 		User:             f.user,
 		Port:             f.port,
 		KeyPath:          f.key,
+		KeyPassphrase:    os.Getenv("DOCKGE_DEPLOY_SSH_KEY_PASSPHRASE"),
 		Password:         os.Getenv("DOCKGE_DEPLOY_SSH_PASSWORD"),
 		KnownHostsPath:   f.knownHosts,
 		AcceptNewHostKey: f.acceptNew,
@@ -201,6 +202,8 @@ SSH flags:
   --host HOST --user USER --port 22 --key ~/.ssh/id_ed25519
   --known-hosts ~/.ssh/known_hosts [--accept-new-host-key] [--sudo]
 
-Password auth is available only through DOCKGE_DEPLOY_SSH_PASSWORD.
+SSH_AUTH_SOCK is used automatically when an OpenSSH-compatible agent is available.
+Password auth is read only from DOCKGE_DEPLOY_SSH_PASSWORD.
+Encrypted key passphrases are read only from DOCKGE_DEPLOY_SSH_KEY_PASSPHRASE.
 `, appversion.Version)
 }
