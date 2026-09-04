@@ -57,7 +57,7 @@ jobs:
             dockge-manager/Dockerfile \
             dockge-manager/backend \
             dockge-manager/frontend/src
-          grep -RIn '/api/v1/automation' dockge-manager/README.md >/dev/null
+          grep -n '/api/v1/automation' dockge-manager/backend/app/dockge_client.py >/dev/null
       - name: Build image smoke test
         run: docker build -f dockge-manager/Dockerfile dockge-manager -t dockge-manager:test
 
