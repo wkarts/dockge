@@ -20,7 +20,7 @@
     "fmt": "eslint \"**/*.{ts,vue}\" --fix",
     "lint": "eslint \"**/*.{ts,vue}\"",
     "check-ts": "tsc --noEmit",
-    "test:security": "tsx --test backend/totp.test.ts backend/api/api-token-store.test.ts backend/api/stack-file-store.test.ts",
+    "test:security": "tsx --test backend/totp.test.ts backend/api/api-token-store.test.ts backend/api/stack-file-store.test.ts backend/api/api-idempotency-store.test.ts",
     "start": "tsx ./backend/index.ts",
     "dev": "concurrently -k -r \"wait-on tcp:5000 && npm run dev:backend \" \"npm run dev:frontend\"",
     "dev:backend": "cross-env NODE_ENV=development tsx watch --inspect ./backend/index.ts",
