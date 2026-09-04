@@ -6,6 +6,11 @@ import { Router } from "../router";
 import { DockgeServer } from "../dockge-server";
 import { Stack } from "../stack";
 import { apiAuth, apiPrincipal, assertStackAllowed, audit } from "../api/api-token-auth";
+import {
+    beginIdempotentMutation,
+    completeIdempotentMutation,
+    IdempotencySession,
+} from "../api/api-idempotency-store";
 import { resolveComposeEnv, writePrivateFileAtomic } from "../api/stack-file-store";
 
 interface StackBody {
@@ -28,6 +33,43 @@ function errorResponse(error: unknown, res: Response) {
     res.status(err.statusCode || 500).json({ error: err.message || "internal_error", request_id: res.locals.requestId });
 }
 function trimOutput(value: string): string { return value.length > 262144 ? value.slice(-262144) : value; }
+
+/**
+ * Retorna false quando a requisição já foi respondida por replay/conflito,
+ * null quando idempotência não foi solicitada, ou uma sessão a concluir após
+ * a mutação efetiva.
+ */
+function beginMutation(req: Request, res: Response): IdempotencySession | null | false {
+    const principal = apiPrincipal(res);
+    const decision = beginIdempotentMutation(
+        principal.id,
+        req.header("idempotency-key"),
+        req.method,
+        req.originalUrl,
+        req.body,
+    );
+
+    switch (decision.mode) {
+    case "disabled":
+        return null;
+    case "execute":
+        return decision.session;
+    case "replay":
+        res.setHeader("x-idempotency-replayed", "true");
+        res.status(decision.response.status).json(decision.response.body);
+        return false;
+    case "conflict":
+        res.status(409).json({ error: "idempotency_key_reused_with_different_request", request_id: res.locals.requestId });
+        return false;
+    case "in_doubt":
+        res.status(409).json({
+            error: "idempotency_result_in_doubt",
+            message: "A previous execution with this key started but did not persist a final result; automatic re-execution was blocked.",
+            request_id: res.locals.requestId,
+        });
+        return false;
+    }
+}
 
 async function runCompose(server: DockgeServer, name: string, args: string[]) {
     const cwd = path.join(server.stacksDir, name);
@@ -85,6 +127,7 @@ export class ApiV1Router extends Router {
 
         router.put(`${base}/stacks/:name`, apiAuth("stacks:write"), async (req: Request, res: Response) => {
             const name = req.params.name;
+            let idempotency: IdempotencySession | undefined;
             try {
                 requireValidStackName(name); assertStackAllowed(res, name);
                 const body = req.body as StackBody;
@@ -95,6 +138,10 @@ export class ApiV1Router extends Router {
                     const principal = apiPrincipal(res);
                     if (!body.adopt || !principal.scopes.has("stacks:adopt")) return res.status(409).json({ error: "external_stack_requires_explicit_adoption" });
                 }
+
+                const mutation = beginMutation(req, res);
+                if (mutation === false) return;
+                idempotency = mutation || undefined;
 
                 // Em updates, compose_env ausente preserva o .env atual. Uma
                 // string vazia explícita continua sendo uma solicitação válida
@@ -116,25 +163,36 @@ export class ApiV1Router extends Router {
                     updated_at: new Date().toISOString(),
                 }, null, 2) + "\n");
 
+                const response = { ok: true, name, adopted: exists && !!body.adopt };
+                completeIdempotentMutation(idempotency, exists ? 200 : 201, response);
                 audit(res, exists ? "stack.update" : "stack.create", name, "succeeded", { adopted: exists && !!body.adopt });
-                res.status(exists ? 200 : 201).json({ ok: true, name, adopted: exists && !!body.adopt });
+                res.status(exists ? 200 : 201).json(response);
             } catch (error) { audit(res, "stack.apply", name, "failed"); errorResponse(error, res); }
         });
 
         router.delete(`${base}/stacks/:name`, apiAuth("stacks:delete"), async (req, res) => {
             const name = req.params.name;
+            let idempotency: IdempotencySession | undefined;
             try {
                 requireValidStackName(name); assertStackAllowed(res, name);
                 if (!isApiManaged(server, name)) return res.status(409).json({ error: "external_stack_not_managed_by_api" });
+
+                const mutation = beginMutation(req, res);
+                if (mutation === false) return;
+                idempotency = mutation || undefined;
+
                 await runCompose(server, name, ["down", "--remove-orphans"]);
                 await fs.promises.rm(path.join(server.stacksDir, name), { recursive: true, force: true });
+                const response = { ok: true, name, volumes_removed: false };
+                completeIdempotentMutation(idempotency, 200, response);
                 audit(res, "stack.delete", name, "succeeded");
-                res.json({ ok: true, name, volumes_removed: false });
+                res.json(response);
             } catch (error) { audit(res, "stack.delete", name, "failed"); errorResponse(error, res); }
         });
 
         router.post(`${base}/stacks/:name/actions/:action`, apiAuth("stacks:operate"), async (req, res) => {
             const name = req.params.name; const action = req.params.action;
+            let idempotency: IdempotencySession | undefined;
             try {
                 requireValidStackName(name); assertStackAllowed(res, name);
                 if (!isApiManaged(server, name)) return res.status(409).json({ error: "external_stack_not_managed_by_api" });
@@ -144,9 +202,17 @@ export class ApiV1Router extends Router {
                 };
                 const args = actions[action];
                 if (!args) return res.status(400).json({ error: "unsupported_action", supported: Object.keys(actions) });
+
+                const mutation = beginMutation(req, res);
+                if (mutation === false) return;
+                idempotency = mutation || undefined;
+
                 const output = await runCompose(server, name, args);
+                const response = { ok: true, name, action, ...output };
+                // O replay não precisa reter stdout/stderr potencialmente grande.
+                completeIdempotentMutation(idempotency, 200, { ok: true, name, action, replayed: true });
                 audit(res, `stack.${action}`, name, "succeeded");
-                res.json({ ok: true, name, action, ...output });
+                res.json(response);
             } catch (error) { audit(res, `stack.${action}`, name, "failed"); errorResponse(error, res); }
         });
 
