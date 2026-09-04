@@ -33,9 +33,13 @@ jobs:
         run: |
           test -s VERSION
           test -s backend/api/api-token-auth.ts
+          test -s backend/api/api-idempotency-store.ts
+          test -s backend/api/stack-file-store.ts
           test -s backend/routers/api-v1-router.ts
           test -s deploy/compose.api-first.yaml
           grep -q '/api/v1/automation' backend/routers/api-v1-router.ts
+          grep -q 'idempotency-key' backend/routers/api-v1-router.ts
+          grep -q 'DOCKGE_API_IDEMPOTENCY_FILE' deploy/compose.api-first.yaml
           grep -q 'new ApiV1Router' backend/routers/main-router.ts
           test -s backend/totp.ts
           test -s backend/socket-handlers/twofa-socket-handler.ts
