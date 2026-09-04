@@ -15,6 +15,55 @@ export type Stack = {
   composeYAML?: string;
 };
 
+export type Application = {
+  id: string;
+  name: string;
+  description: string;
+  created_at: string;
+};
+
+export type Deployment = {
+  id: string;
+  application_id: string;
+  target_id: string;
+  stack_name: string;
+  status: string;
+  current_revision: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Operation = {
+  id: string;
+  target_id: string;
+  stack_name: string;
+  action: string;
+  idempotency_key: string;
+  status: string;
+  http_status: number | null;
+  created_at: string;
+  completed_at: string | null;
+};
+
+export type AuditEvent = {
+  id: string;
+  actor: string;
+  event_type: string;
+  target_id: string | null;
+  resource: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+
+export type HealthSnapshot = {
+  id: string;
+  target_id: string;
+  ok: boolean;
+  version: string | null;
+  detail_json: Record<string, unknown>;
+  created_at: string;
+};
+
 const tokenKey = "dockge-manager-token";
 
 export function getToken(): string {
@@ -49,7 +98,7 @@ export async function login(email: string, password: string): Promise<void> {
 }
 
 export const api = {
-  me: () => request<{ email: string }>("/api/v1/auth/me"),
+  me: () => request<{ email: string; is_admin: boolean }>("/api/v1/auth/me"),
   targets: () => request<Target[]>("/api/v1/targets"),
   createTarget: (body: { name: string; base_url: string; token: string; verify_tls: boolean }) =>
     request<Target>("/api/v1/targets", { method: "POST", body: JSON.stringify(body) }),
@@ -59,5 +108,27 @@ export const api = {
   action: (id: string, stack: string, action: string) =>
     request<Record<string, unknown>>(`/api/v1/targets/${id}/stacks/${encodeURIComponent(stack)}/actions/${action}`, { method: "POST" }),
   logs: (id: string, stack: string) =>
-    request<{ stdout?: string; stderr?: string }>(`/api/v1/targets/${id}/stacks/${encodeURIComponent(stack)}/logs?tail=300`)
+    request<{ stdout?: string; stderr?: string }>(`/api/v1/targets/${id}/stacks/${encodeURIComponent(stack)}/logs?tail=300`),
+  applications: () => request<Application[]>("/api/v1/applications"),
+  createApplication: (body: { name: string; description: string }) =>
+    request<Application>("/api/v1/applications", { method: "POST", body: JSON.stringify(body) }),
+  deployments: () => request<Deployment[]>("/api/v1/deployments"),
+  createDeployment: (body: {
+    application_id: string;
+    target_id: string;
+    stack_name: string;
+    compose_yaml: string;
+    compose_env: string;
+    adopt_external: boolean;
+  }) => request<Deployment>("/api/v1/deployments", { method: "POST", body: JSON.stringify(body) }),
+  createRevision: (deploymentId: string, body: { compose_yaml: string; compose_env: string; adopt_external: boolean }) =>
+    request<Record<string, unknown>>(`/api/v1/deployments/${deploymentId}/revisions`, { method: "POST", body: JSON.stringify(body) }),
+  deploy: (deploymentId: string) =>
+    request<Record<string, unknown>>(`/api/v1/deployments/${deploymentId}/deploy`, { method: "POST" }),
+  rollback: (deploymentId: string) =>
+    request<Record<string, unknown>>(`/api/v1/deployments/${deploymentId}/rollback`, { method: "POST" }),
+  operations: (limit = 100) => request<Operation[]>(`/api/v1/operations?limit=${limit}`),
+  audit: (limit = 100) => request<AuditEvent[]>(`/api/v1/audit?limit=${limit}`),
+  healthSnapshots: (targetId = "", limit = 100) =>
+    request<HealthSnapshot[]>(`/api/v1/health-snapshots?limit=${limit}${targetId ? `&target_id=${encodeURIComponent(targetId)}` : ""}`)
 };
