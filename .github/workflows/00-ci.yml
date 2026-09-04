@@ -43,6 +43,8 @@ jobs:
           grep -q 'new ApiV1Router' backend/routers/main-router.ts
           test -s backend/totp.ts
           test -s backend/socket-handlers/twofa-socket-handler.ts
+      - name: Proteger Native Agents do Dockge
+        run: node ./extra/check-agent-boundaries.mjs
       - name: Garantir independência operacional
         shell: bash
         run: |
