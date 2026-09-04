@@ -24,8 +24,16 @@ concurrency:
 
 jobs:
   linux:
-    name: Linux · binário + DEB + RPM
-    runs-on: ubuntu-24.04
+    name: Linux ${{ matrix.arch }} · binário + DEB + RPM
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     defaults:
       run:
@@ -42,27 +50,27 @@ jobs:
         run: go vet ./...
       - name: Dependências de empacotamento
         run: sudo apt-get update && sudo apt-get install -y rpm
-      - name: Build Linux amd64/arm64
+      - name: Build e pacotes Linux ${{ matrix.arch }}
         shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           mkdir -p dist/bin dist/packages
           VERSION="$(tr -d '[:space:]' < VERSION)"
-          for arch in amd64 arm64; do
-            GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/wkarts/infrastructure-agent/internal/version.Version=$VERSION" -o "dist/bin/infra-agent-linux-$arch" ./cmd/infra-agent
-            chmod +x "dist/bin/infra-agent-linux-$arch"
-            bash ./scripts/package-deb.sh "$arch"
-            bash ./scripts/package-rpm.sh "$arch"
-          done
-          sha256sum dist/bin/* dist/packages/* > dist/SHA256SUMS-linux.txt
+          GOOS=linux GOARCH="$TARGET_ARCH" CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/wkarts/infrastructure-agent/internal/version.Version=$VERSION" -o "dist/bin/infra-agent-linux-$TARGET_ARCH" ./cmd/infra-agent
+          chmod +x "dist/bin/infra-agent-linux-$TARGET_ARCH"
+          bash ./scripts/package-deb.sh "$TARGET_ARCH"
+          bash ./scripts/package-rpm.sh "$TARGET_ARCH"
+          sha256sum "dist/bin/infra-agent-linux-$TARGET_ARCH" dist/packages/* > "dist/SHA256SUMS-linux-$TARGET_ARCH.txt"
       - uses: actions/upload-artifact@v4
         with:
-          name: infrastructure-agent-linux
+          name: infrastructure-agent-linux-${{ matrix.arch }}
           path: |
-            infrastructure-agent/dist/bin/infra-agent-linux-*
+            infrastructure-agent/dist/bin/infra-agent-linux-${{ matrix.arch }}
             infrastructure-agent/dist/packages/*.deb
             infrastructure-agent/dist/packages/*.rpm
-            infrastructure-agent/dist/SHA256SUMS-linux.txt
+            infrastructure-agent/dist/SHA256SUMS-linux-${{ matrix.arch }}.txt
           if-no-files-found: error
 
   windows:
