@@ -146,11 +146,11 @@ func (r Runner) execute(ctx context.Context, ctl config.Controller, action model
     dc := dockge.New(r.Config.Dockge.BaseURL, credential)
     switch action.Type {
     case "dockge.stack.apply":
-        err = dc.ApplyStack(ctx, action.Deployment, action.Payload)
+        err = dc.ApplyStack(ctx, action.Deployment, action.Payload, action.ID)
     case "dockge.stack.delete":
-        err = dc.DeleteStack(ctx, action.Deployment)
+        err = dc.DeleteStack(ctx, action.Deployment, action.ID)
     case "dockge.stack.pull", "dockge.stack.up", "dockge.stack.down", "dockge.stack.restart", "dockge.stack.stop", "dockge.stack.start":
-        err = dc.Action(ctx, action.Deployment, strings.TrimPrefix(action.Type, "dockge.stack."), action.Payload)
+        err = dc.Action(ctx, action.Deployment, strings.TrimPrefix(action.Type, "dockge.stack."), action.Payload, action.ID)
     case "noop":
         result.Status = "succeeded"
         result.Message = "noop"
@@ -207,9 +207,10 @@ func (r Runner) Once(ctx context.Context) error {
             } else {
                 result = r.execute(ctx, ctl, action)
                 if err := actionJournal.Put(journalKey, result); err != nil {
-                    // The operation may already have changed the host. Report the
-                    // real result to the Control Plane, but retain the journal
-                    // error as a local health signal.
+                    // The Dockge API also receives action.ID as Idempotency-Key.
+                    // If this local journal write fails after the host changed,
+                    // the same action can be retried without blindly repeating
+                    // a completed destructive mutation.
                     errs = append(errs, fmt.Errorf("%s journal action %s: %w", ctl.Name, action.ID, err))
                 }
             }
