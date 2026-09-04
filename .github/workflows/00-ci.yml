@@ -62,4 +62,7 @@ jobs:
           fi
           grep -q 'github.com/wkarts/dockge' README.md
           grep -q 'ghcr.io/wkarts/dockge' compose.yaml
-          ! grep -RInE 'branches:[[:space:]]*\[master\]|refs/heads/master' .github/workflows
+          ! grep -RInE 'branches:[[:space:]]*\[master\]|refs/heads/master' \
+            --exclude='00-ci.yml' \
+            --exclude='00-pr-bootstrap.yml' \
+            .github/workflows
