@@ -8,10 +8,13 @@ import tarfile
 ROOT = Path(__file__).resolve().parents[1]
 PART_GLOB = "ecosystem-source.tar.gz.b64.part-*"
 EXPECTED_SHA256 = "8a4c62a53c61a622755af1bfa9eb4b2be71b6e1840de6dab52760082532459cd"
-ALLOWED_FILES = {
-    ".eslintignore",
+WORKFLOW_FILES = {
     ".github/workflows/70-manager.yml",
     ".github/workflows/71-deploy.yml",
+}
+ALLOWED_FILES = {
+    ".eslintignore",
+    *WORKFLOW_FILES,
     "docs/ecosystem/IMPLEMENTATION-STATUS.md",
 }
 ALLOWED_PREFIXES = ("dockge-manager/", "dockge-deploy/")
@@ -50,15 +53,19 @@ def main() -> None:
             unexpected = [name for name in files if not allowed(name)]
             if unexpected:
                 raise RuntimeError(f"unexpected bootstrap files: {unexpected}")
-            required = {".github/workflows/70-manager.yml", ".github/workflows/71-deploy.yml"}
-            if not required.issubset(files):
+            if not WORKFLOW_FILES.issubset(files):
                 raise RuntimeError("bootstrap archive is missing ecosystem workflows")
             if not any(name.startswith("dockge-manager/") for name in files):
                 raise RuntimeError("bootstrap archive is missing Dockge Manager")
             if not any(name.startswith("dockge-deploy/") for name in files):
                 raise RuntimeError("bootstrap archive is missing Dockge Deploy")
+
             for member in members:
                 name = normalized_name(member)
+                if name in WORKFLOW_FILES:
+                    # GitHub's GITHUB_TOKEN cannot create workflow files. They are
+                    # verified here but published separately through the repository API.
+                    continue
                 if member.isdir():
                     if allowed(name + "/") or any(prefix.startswith(name + "/") for prefix in ALLOWED_PREFIXES):
                         (ROOT / name).mkdir(parents=True, exist_ok=True)
