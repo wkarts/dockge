@@ -18,7 +18,7 @@ permissions:
 
 concurrency:
   group: dockge-agent-assets-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   validate:
@@ -220,6 +220,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       DOCKGE_VERSION: ${{ needs.validate.outputs.dockge_version }}
       AGENT_VERSION: ${{ needs.validate.outputs.agent_version }}
     steps:
