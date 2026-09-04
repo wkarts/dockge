@@ -1,0 +1,293 @@
+name: 55 · Agent Assets na Release Dockge
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'VERSION'
+      - '.github/workflows/55-agent-assets.yml'
+  workflow_dispatch:
+    inputs:
+      dockge_version:
+        description: 'Versão Dockge alvo, sem prefixo v (vazio = VERSION atual)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dockge-agent-assets-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Resolver versões
+    runs-on: ubuntu-24.04
+    outputs:
+      dockge_version: ${{ steps.versions.outputs.dockge_version }}
+      agent_version: ${{ steps.versions.outputs.agent_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: versions
+        name: Validar versões Dockge/Agent
+        shell: bash
+        env:
+          INPUT_DOCKGE_VERSION: ${{ inputs.dockge_version }}
+        run: |
+          set -euo pipefail
+          dockge_version="${INPUT_DOCKGE_VERSION:-}"
+          if [ -z "$dockge_version" ]; then
+            dockge_version="$(tr -d '[:space:]' < VERSION)"
+          fi
+          agent_version="$(tr -d '[:space:]' < infrastructure-agent/VERSION)"
+          [[ "$dockge_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Versão Dockge inválida: $dockge_version" >&2; exit 2; }
+          [[ "$agent_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Versão Agent inválida: $agent_version" >&2; exit 3; }
+          echo "dockge_version=$dockge_version" >> "$GITHUB_OUTPUT"
+          echo "agent_version=$agent_version" >> "$GITHUB_OUTPUT"
+          echo "Dockge v$dockge_version receberá Generic Infrastructure Agent $agent_version"
+
+  linux:
+    name: Linux ${{ matrix.arch }} · binário + DEB + RPM
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: infrastructure-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache-dependency-path: infrastructure-agent/go.sum
+      - name: Testes e análise estática
+        run: |
+          go test ./...
+          go vet ./...
+      - name: Dependências de empacotamento
+        run: sudo apt-get update && sudo apt-get install -y rpm
+      - name: Build e pacotes Linux ${{ matrix.arch }}
+        shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          AGENT_VERSION: ${{ needs.validate.outputs.agent_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bin dist/packages release-assets
+          GOOS=linux GOARCH="$TARGET_ARCH" CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-s -w -X github.com/wkarts/infrastructure-agent/internal/version.Version=$AGENT_VERSION" \
+            -o "dist/bin/infra-agent-linux-$TARGET_ARCH" ./cmd/infra-agent
+          chmod +x "dist/bin/infra-agent-linux-$TARGET_ARCH"
+          bash ./scripts/package-deb.sh "$TARGET_ARCH"
+          bash ./scripts/package-rpm.sh "$TARGET_ARCH"
+          sha256sum "dist/bin/infra-agent-linux-$TARGET_ARCH" dist/packages/* > "dist/SHA256SUMS-linux-$TARGET_ARCH.txt"
+          cp "dist/bin/infra-agent-linux-$TARGET_ARCH" release-assets/
+          cp dist/packages/*.deb dist/packages/*.rpm "dist/SHA256SUMS-linux-$TARGET_ARCH.txt" release-assets/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-agent-assets-linux-${{ matrix.arch }}
+          path: infrastructure-agent/release-assets/*
+          if-no-files-found: error
+
+  windows:
+    name: Windows · EXE + Setup amd64/arm64
+    needs: validate
+    runs-on: windows-2025
+    defaults:
+      run:
+        working-directory: infrastructure-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache-dependency-path: infrastructure-agent/go.sum
+      - name: Testes e análise estática
+        shell: pwsh
+        run: |
+          go test ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build Windows amd64/arm64
+        shell: pwsh
+        env:
+          AGENT_VERSION: ${{ needs.validate.outputs.agent_version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force dist/bin, dist/packages, release-assets | Out-Null
+          foreach ($arch in @('amd64','arm64')) {
+            $env:GOOS = 'windows'
+            $env:GOARCH = $arch
+            $env:CGO_ENABLED = '0'
+            go build -trimpath -ldflags "-s -w -X github.com/wkarts/infrastructure-agent/internal/version.Version=$env:AGENT_VERSION" -o "dist/bin/infra-agent-windows-$arch.exe" ./cmd/infra-agent
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Instalar Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - name: Gerar Setup Windows amd64/arm64
+        shell: pwsh
+        env:
+          AGENT_VERSION: ${{ needs.validate.outputs.agent_version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sourceDir = (Resolve-Path 'dist/bin').Path
+          $outputDir = (Resolve-Path 'dist/packages').Path
+          $packagingDir = (Resolve-Path 'packaging/windows').Path
+          $candidates = @(
+            (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+            (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'),
+            (Join-Path $env:ChocolateyInstall 'bin\ISCC.exe')
+          )
+          $iscc = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if (-not $iscc) {
+            $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+            if ($command) { $iscc = $command.Source }
+          }
+          if (-not $iscc) {
+            $chocoRoot = Join-Path $env:ChocolateyInstall 'lib\innosetup'
+            if (Test-Path $chocoRoot) {
+              $iscc = Get-ChildItem $chocoRoot -Filter ISCC.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName -First 1
+            }
+          }
+          if (-not $iscc) { throw 'ISCC.exe não encontrado após instalação do Inno Setup' }
+          & $iscc "/DMyAppVersion=$env:AGENT_VERSION" "/DMyAppArch=amd64" "/DMySourceDir=$sourceDir" "/DMyOutputDir=$outputDir" "/DMyPackagingDir=$packagingDir" packaging/windows/installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $iscc "/DMyAppVersion=$env:AGENT_VERSION" "/DMySourceDir=$sourceDir" "/DMyOutputDir=$outputDir" "/DMyPackagingDir=$packagingDir" packaging/windows/installer-arm64.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-FileHash -Algorithm SHA256 dist/bin/*.exe, dist/packages/*.exe | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } | Set-Content dist/SHA256SUMS-windows.txt
+          Copy-Item dist/bin/*.exe release-assets/
+          Copy-Item dist/packages/*.exe release-assets/
+          Copy-Item dist/SHA256SUMS-windows.txt release-assets/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-agent-assets-windows
+          path: infrastructure-agent/release-assets/*
+          if-no-files-found: error
+
+  macos:
+    name: macOS · binário + PKG
+    needs: validate
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: infrastructure-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache-dependency-path: infrastructure-agent/go.sum
+      - name: Testes e análise estática
+        run: |
+          go test ./...
+          go vet ./...
+      - name: Build macOS Intel/Apple Silicon e PKG
+        shell: bash
+        env:
+          AGENT_VERSION: ${{ needs.validate.outputs.agent_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bin dist/packages release-assets
+          for arch in amd64 arm64; do
+            GOOS=darwin GOARCH="$arch" CGO_ENABLED=0 go build -trimpath \
+              -ldflags "-s -w -X github.com/wkarts/infrastructure-agent/internal/version.Version=$AGENT_VERSION" \
+              -o "dist/bin/infra-agent-darwin-$arch" ./cmd/infra-agent
+          done
+          chmod +x dist/bin/infra-agent-darwin-*
+          bash ./packaging/macos/build-pkg.sh x86_64
+          bash ./packaging/macos/build-pkg.sh arm64
+          shasum -a 256 dist/bin/* dist/packages/*.pkg > dist/SHA256SUMS-macos.txt
+          cp dist/bin/infra-agent-darwin-* dist/packages/*.pkg dist/SHA256SUMS-macos.txt release-assets/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-agent-assets-macos
+          path: infrastructure-agent/release-assets/*
+          if-no-files-found: error
+
+  publish:
+    name: Anexar assets à release Dockge
+    needs: [validate, linux, windows, macos]
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DOCKGE_VERSION: ${{ needs.validate.outputs.dockge_version }}
+      AGENT_VERSION: ${{ needs.validate.outputs.agent_version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-agent-assets-*
+          path: release-assets
+          merge-multiple: true
+      - name: Consolidar checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          find release-assets -maxdepth 1 -type f ! -name 'SHA256SUMS-*' -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > "release-assets/SHA256SUMS-agent-$AGENT_VERSION.txt"
+          test -s "release-assets/SHA256SUMS-agent-$AGENT_VERSION.txt"
+      - name: Aguardar release Dockge correspondente
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$DOCKGE_VERSION"
+          for attempt in $(seq 1 60); do
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "Release $tag encontrada."
+              exit 0
+            fi
+            echo "Aguardando criação de $tag ($attempt/60)..."
+            sleep 10
+          done
+          echo "Release v$DOCKGE_VERSION não apareceu no intervalo esperado." >&2
+          exit 4
+      - name: Publicar binários e instaladores do Agent
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$DOCKGE_VERSION"
+          mapfile -t assets < <(find release-assets -maxdepth 1 -type f -printf '%p\n' | sort)
+          [ "${#assets[@]}" -ge 10 ] || { echo 'Conjunto de artefatos incompleto.' >&2; exit 5; }
+          gh release upload "$tag" "${assets[@]}" --clobber
+      - name: Atualizar notas da release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$DOCKGE_VERSION"
+          body="$(gh release view "$tag" --json body -q .body)"
+          marker="Generic Infrastructure Agent $AGENT_VERSION"
+          if ! grep -Fq "$marker" <<<"$body"; then
+            {
+              printf '%s\n\n' "$body"
+              printf '## Generic Infrastructure Agent %s\n\n' "$AGENT_VERSION"
+              printf 'Esta release inclui binários e instaladores multiplataforma do Agent:\n\n'
+              printf -- '- Linux amd64/arm64: binário, DEB e RPM;\n'
+              printf -- '- Windows amd64/arm64: EXE e Setup;\n'
+              printf -- '- macOS Intel/Apple Silicon: binário e PKG;\n'
+              printf -- '- checksums SHA-256 por plataforma e consolidado.\n'
+            } > release-notes.md
+            gh release edit "$tag" --notes-file release-notes.md
+          fi
+      - name: Verificar publicação
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$DOCKGE_VERSION"
+          names="$(gh release view "$tag" --json assets -q '.assets[].name')"
+          grep -q 'infra-agent-linux-amd64' <<<"$names"
+          grep -q 'infra-agent-linux-arm64' <<<"$names"
+          grep -q 'infra-agent-windows-amd64.exe' <<<"$names"
+          grep -q 'infra-agent-windows-arm64.exe' <<<"$names"
+          grep -q 'infra-agent-darwin-amd64' <<<"$names"
+          grep -q 'infra-agent-darwin-arm64' <<<"$names"
+          grep -q "SHA256SUMS-agent-$AGENT_VERSION.txt" <<<"$names"
