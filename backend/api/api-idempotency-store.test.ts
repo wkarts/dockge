@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { beginIdempotentMutation, completeIdempotentMutation } from "./api-idempotency-store";
 
-function withStore(t: test.TestContext): string {
+function withStore(t: TestContext): string {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "dockge-idempotency-"));
     const file = path.join(root, "api-idempotency.json");
     process.env.DOCKGE_API_IDEMPOTENCY_FILE = file;
