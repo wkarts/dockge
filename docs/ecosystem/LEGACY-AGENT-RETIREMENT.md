@@ -1,49 +1,41 @@
 # Retirada do Generic Infrastructure Agent 0.2.0
 
-## Situação
+**Status:** retirado do Dockge Core.
 
-A implementação `infrastructure-agent/` 0.2.0 foi construída como daemon ligado a Control Planes, com enrollment, heartbeat, desired-state e execução através de Dockge API local. Esse modelo não representa mais o papel aprovado.
+## Motivo
 
-## Decisão
+A implementação histórica `infrastructure-agent/` foi criada como daemon ligado a Control Planes, com enrollment, heartbeat e desired-state. Esse modelo não representa o papel aprovado para implantação e gerenciamento do ecossistema.
 
-A linha 0.2.0 é **legada/encerrada**. Não será base do Dockge Deploy nem do Dockge Manager.
+## Removido do Core
 
-## Preservar no Dockge Core
+- `infrastructure-agent/`;
+- workflows exclusivos de build/release do Agent 0.2.0;
+- contrato `control-plane-agent-api.md`;
+- documentação de release centrada nessa implementação.
+
+## Preservado
+
+Do Dockge Core permanecem:
 
 - Automation REST API;
-- tokens/scopes/namespaces;
-- `Idempotency-Key`;
+- API tokens, scopes e namespaces;
+- adoção explícita;
+- `Idempotency-Key` persistente;
 - audit log;
 - gravação segura de stacks;
-- Native Agents e AgentManager.
+- Native Agents e `AgentManager` originais do Dockge.
 
-## Retirar em mudança separada e auditável
+## Release v1.6.0
 
-Candidatos explícitos:
+Os binários/pacotes do Generic Infrastructure Agent 0.2.0 anexados à release v1.6.0 são retirados. Os arquivos de código-fonte gerados automaticamente pelo GitHub permanecem disponíveis.
 
-```text
-infrastructure-agent/
-.github/workflows/30-agent-build.yml
-.github/workflows/55-agent-assets.yml
-.github/workflows/60-agent-release.yml
-docs/contracts/control-plane-agent-api.md
-```
+Isso não altera o runtime Docker do Dockge 1.6.0 e não remove os Native Agents internos.
 
-Também devem ser revisadas referências no README, release docs e demais documentos.
+## Substituição arquitetural
 
-## Proteção obrigatória
+O papel foi dividido em dois produtos independentes:
 
-A retirada nunca usará padrões amplos como `*agent*`, pois isso poderia atingir a tecnologia de Native Agents. A lista de paths removidos deve ser explícita e a CI deve comprovar que os arquivos nativos não foram alterados.
+- **Dockge Deploy** — host lifecycle, SSH, instalação, migração, upgrade, recuperação e rollback;
+- **Dockge Manager** — management plane PWA sobre a Automation API.
 
-## Release 1.6.0
-
-Os artefatos 0.2.0 já publicados são históricos. Remover assets de uma release existente é decisão operacional separada; retirar o legado do código futuro não exige reescrever a release 1.6.0.
-
-## Sequência
-
-1. aprovar a arquitetura nova;
-2. preparar os projetos Manager e Deploy;
-3. criar scaffold mínimo dos novos produtos;
-4. retirar o legado 0.2.0 em PR isolado;
-5. executar CI completa do Dockge;
-6. verificar explicitamente que Automation API e Native Agents permanecem intactos.
+Ver `DOCKGE-DEPLOY.md`, `DOCKGE-MANAGER.md` e `BOUNDARIES-AND-CONTRACTS.md`.

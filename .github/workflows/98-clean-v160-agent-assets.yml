@@ -1,0 +1,49 @@
+name: 98 · Remove legacy Agent assets from v1.6.0
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/98-clean-v160-agent-assets.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dockge-clean-v160-agent-assets
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Remover binários legados da release v1.6.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_json="$(gh api "repos/$GH_REPO/releases/tags/v1.6.0")"
+          mapfile -t ids < <(jq -r '.assets[].id' <<<"$release_json")
+          for id in "${ids[@]}"; do
+            echo "Removendo release asset $id"
+            gh api -X DELETE "repos/$GH_REPO/releases/assets/$id"
+          done
+
+          remaining="$(gh api "repos/$GH_REPO/releases/tags/v1.6.0" --jq '.assets | length')"
+          if [ "$remaining" -ne 0 ]; then
+            echo "Ainda existem $remaining assets anexados à v1.6.0" >&2
+            exit 41
+          fi
+
+          body="$(gh api "repos/$GH_REPO/releases/tags/v1.6.0" --jq '.body // ""')"
+          note='> Os binários do Generic Infrastructure Agent 0.2.0 foram retirados porque essa implementação foi descontinuada. Os arquivos de código-fonte do Dockge gerados pelo GitHub permanecem disponíveis.'
+          if ! grep -Fq "$note" <<<"$body"; then
+            printf '%s\n\n%s\n' "$body" "$note" > /tmp/release-notes.md
+            gh release edit v1.6.0 --notes-file /tmp/release-notes.md
+          fi
+
+          echo 'v1.6.0 sem assets binários legados; source archives permanecem administrados pelo GitHub.'

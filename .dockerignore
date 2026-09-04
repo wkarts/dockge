@@ -7,12 +7,15 @@ stacks
 tmp
 /private
 
-# Repository/build metadata not needed in images
+# Repository/build metadata not needed in Dockge Core image
 .editorconfig
 .eslintrc.cjs
 .git
 .gitignore
 README.md
-infrastructure-agent/dist
+
+# Independent ecosystem products are never copied into the Core image
+dockge-manager
+dockge-deploy
 
 # O frontend NÃO é ignorado: o Dockerfile constrói frontend-dist internamente.

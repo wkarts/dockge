@@ -1,11 +1,9 @@
-# Releases
+# Releases Dockge Core
 
-Este diretório registra notas de promoção da linha independente do projeto.
+As releases `vX.Y.Z` deste repositório representam exclusivamente o **Dockge Core** e sua imagem `ghcr.io/wkarts/dockge`.
 
-O Git Flow canônico é:
+Dockge Manager e Dockge Deploy possuem versionamento e artefatos independentes.
 
-```text
-feature/fix -> develop -> main -> SemVer/GHCR/GitHub Release
-```
+Os binários do antigo Generic Infrastructure Agent 0.2.0 foram retirados da release v1.6.0. Os downloads de código-fonte gerados automaticamente pelo GitHub permanecem disponíveis.
 
-As notas descrevem o conteúdo planejado da promoção. Uma versão só é considerada oficialmente publicada quando a tag, o GitHub Release e os artefatos/imagens correspondentes existirem e forem confirmados.
+A documentação arquitetural atual está em `docs/ecosystem/`.
