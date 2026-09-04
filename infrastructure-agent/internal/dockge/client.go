@@ -21,7 +21,7 @@ func New(baseURL, token string) *Client {
     return &Client{BaseURL: strings.TrimRight(baseURL, "/"), Token: token, HTTP: &http.Client{Timeout: 2 * time.Minute}}
 }
 
-func (c *Client) do(ctx context.Context, method, path string, in any, out any) error {
+func (c *Client) do(ctx context.Context, method, path string, in any, out any, idempotencyKey string) error {
     var body io.Reader
     if in != nil {
         b, err := json.Marshal(in)
@@ -41,6 +41,9 @@ func (c *Client) do(ctx context.Context, method, path string, in any, out any) e
     if c.Token != "" {
         req.Header.Set("Authorization", "Bearer "+c.Token)
     }
+    if strings.TrimSpace(idempotencyKey) != "" {
+        req.Header.Set("Idempotency-Key", idempotencyKey)
+    }
     res, err := c.HTTP.Do(req)
     if err != nil {
         return err
@@ -56,14 +59,14 @@ func (c *Client) do(ctx context.Context, method, path string, in any, out any) e
     return nil
 }
 
-func (c *Client) ApplyStack(ctx context.Context, deployment string, payload map[string]any) error {
-    return c.do(ctx, http.MethodPut, "/api/v1/automation/stacks/"+deployment, payload, nil)
+func (c *Client) ApplyStack(ctx context.Context, deployment string, payload map[string]any, idempotencyKey string) error {
+    return c.do(ctx, http.MethodPut, "/api/v1/automation/stacks/"+deployment, payload, nil, idempotencyKey)
 }
 
-func (c *Client) DeleteStack(ctx context.Context, deployment string) error {
-    return c.do(ctx, http.MethodDelete, "/api/v1/automation/stacks/"+deployment, nil, nil)
+func (c *Client) DeleteStack(ctx context.Context, deployment, idempotencyKey string) error {
+    return c.do(ctx, http.MethodDelete, "/api/v1/automation/stacks/"+deployment, nil, nil, idempotencyKey)
 }
 
-func (c *Client) Action(ctx context.Context, deployment, action string, payload map[string]any) error {
-    return c.do(ctx, http.MethodPost, "/api/v1/automation/stacks/"+deployment+"/actions/"+action, payload, nil)
+func (c *Client) Action(ctx context.Context, deployment, action string, payload map[string]any, idempotencyKey string) error {
+    return c.do(ctx, http.MethodPost, "/api/v1/automation/stacks/"+deployment+"/actions/"+action, payload, nil, idempotencyKey)
 }

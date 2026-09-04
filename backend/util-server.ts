@@ -58,16 +58,18 @@ export function callbackError(error : unknown, callback : unknown) {
         return;
     }
 
-    if (error instanceof Error) {
-        callback({
-            ok: false,
-            msg: error.message,
-            msgi18n: true,
-        });
-    } else if (error instanceof ValidationError) {
+    // ValidationError herda de Error, portanto deve ser testado primeiro para
+    // que o frontend receba corretamente ERROR_TYPE_VALIDATION.
+    if (error instanceof ValidationError) {
         callback({
             ok: false,
             type: ERROR_TYPE_VALIDATION,
+            msg: error.message,
+            msgi18n: true,
+        });
+    } else if (error instanceof Error) {
+        callback({
+            ok: false,
             msg: error.message,
             msgi18n: true,
         });
