@@ -10,9 +10,18 @@ Um mesmo host pode estar vinculado simultaneamente a vários Control Planes. Cad
 - `agent_id` próprio;
 - credencial de acesso própria;
 - credencial de enrollment bootstrap própria;
+- credencial Dockge própria quando o vínculo pode executar deployments;
 - prefixos/namespaces de deployments autorizados próprios.
 
+A configuração rejeita reutilização do mesmo arquivo sensível por vínculos diferentes. `enrollment_file`, `credential_file`, `agent_identity_file` e `dockge_credential_file` formam namespaces locais isolados por Control Plane.
+
 A indisponibilidade de um Control Plane não deve interromper heartbeat/reconciliação dos demais. Enrollment pendente é tentado novamente em ciclos posteriores sem reiniciar o Agent.
+
+## Transporte
+
+Control Planes devem usar HTTPS. HTTP é aceito somente quando `allow_insecure_http=true` estiver explicitamente configurado para laboratório.
+
+O endpoint local do Dockge aceita apenas esquemas HTTP/HTTPS e, por padrão, deve estar em loopback (`127.0.0.1`, `localhost` ou `::1`). Acesso não-loopback exige opt-in explícito.
 
 ## Enrollment
 
@@ -22,7 +31,7 @@ Entrada mínima:
 
 ```json
 {
-  "agent_version": "0.1.0",
+  "agent_version": "0.2.0",
   "inventory": {},
   "nonce": "random-nonce"
 }
@@ -85,13 +94,17 @@ Exemplo:
 Para um mesmo vínculo de Control Plane:
 
 1. cada intenção de execução recebe um `action.id` único e não vazio;
-2. se o Control Plane reenviar o **mesmo `action.id`**, o Agent **não executa a operação novamente**;
+2. se o Control Plane reenviar o **mesmo `action.id`**, o Agent **não executa a operação novamente** quando já existe resultado no journal;
 3. o Agent lê o resultado persistido no journal local e apenas o reporta novamente;
 4. se o Control Plane deseja uma nova tentativa real da operação, deve emitir **novo `action.id`**;
 5. ações expiradas, negadas e que falharam também são resultados finais daquele `action.id` e são journaladas;
 6. IDs iguais emitidos por Control Planes diferentes não colidem, pois o journal usa `controller + action_id` como chave.
 
-O journal é persistido no `data_dir` do Agent e sobrevive a restart/upgrade. Isso evita que uma falha de rede depois de um `pull`, `up`, `restart` ou `delete` faça a mesma alteração ser executada duas vezes apenas porque o resultado não chegou ao Control Plane.
+A partir do Agent 0.2, existe uma segunda camada: toda mutação enviada ao Dockge carrega `Idempotency-Key: <action.id>`. O Dockge reserva a chave persistentemente antes de executar a alteração e guarda a conclusão. Isso cobre a janela em que Docker/Compose concluiu a operação, mas o processo do Agent caiu antes de conseguir gravar o journal local.
+
+Se o Dockge encontrar uma reserva sem resultado final após uma queda, ele responde `409 idempotency_result_in_doubt` e não repete automaticamente a operação. O Agent reportará a falha ao Control Plane; o Control Plane deve reconciliar o estado atual e emitir um **novo** `action.id` apenas quando decidir por uma nova execução.
+
+O journal é persistido no `data_dir` do Agent e sobrevive a restart/upgrade. Em conjunto com o store de idempotência do Dockge, uma falha de rede/processo não deve transformar um `pull`, `up`, `restart` ou `delete` em duplicação cega.
 
 ## Resultado
 
@@ -158,6 +171,7 @@ Agent → Dockge → Docker/Compose
 
 - HTTPS obrigatório para Control Planes, salvo opt-in explícito de laboratório.
 - Credencial individual por Agent/Control Plane; rotação e revogação devem ser suportadas pelo Control Plane.
+- Arquivos sensíveis não podem ser reutilizados entre vínculos de Control Plane.
 - mTLS por instalação é evolução compatível com este contrato.
 - Nunca expor o Docker socket ao Control Plane.
 - Dockge REST deve preferencialmente escutar somente em loopback/rede privada.
@@ -165,3 +179,4 @@ Agent → Dockge → Docker/Compose
 - O Agent não oferece shell remoto arbitrário.
 - Credenciais ficam em arquivos separados, com permissões restritas, e não dentro de `agent.json`.
 - O journal não deve armazenar bearer tokens, enrollment tokens ou segredos de aplicação.
+- O store de idempotência Dockge persiste somente hashes de principal/chave e fingerprint da requisição; não persiste o `action.id` em texto claro.
