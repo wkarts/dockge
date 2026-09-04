@@ -4,6 +4,8 @@ Agente de infraestrutura multiplataforma, independente de produto, para vincular
 
 Ele não pertence ao PIGE360, Connect|API, ERP, Scheduler ou Mailcow. Cada plataforma é apenas um consumidor autorizado do mesmo agente.
 
+Versão desta linha: **0.2.0**.
+
 ## Arquitetura
 
 ```text
@@ -11,7 +13,7 @@ Control Plane A ── HTTPS ─┐
 Control Plane B ── HTTPS ─┼─> Generic Infrastructure Agent
 Control Plane C ── HTTPS ─┘           │
                                       │ credencial Dockge própria
-                                      │ para cada vínculo
+                                      │ + Idempotency-Key=action.id
                                       ▼
                                 Dockge API local
                                       │
@@ -24,6 +26,7 @@ Princípios:
 - comunicação permanente de saída; nenhuma porta administrativa do Agent precisa ficar pública;
 - um host pode ser inscrito em múltiplos Control Planes;
 - cada Control Plane recebe identidade, credencial remota, credencial Dockge local e namespaces próprios;
+- arquivos de enrollment, access token, identidade e credencial Dockge não podem ser reutilizados entre vínculos diferentes;
 - uma credencial local de `pige360` não precisa ter acesso a stacks `connect-api-*` e vice-versa;
 - configurações históricas com uma credencial Dockge global continuam suportadas como fallback de compatibilidade;
 - políticas comerciais, inadimplência, autorização de upgrade e janelas de manutenção pertencem ao Control Plane, não ao Agent;
@@ -44,29 +47,45 @@ infra-agent --config <arquivo> once
 infra-agent --config <arquivo> run
 ```
 
-`configure` adiciona ou atualiza somente o vínculo cujo nome foi informado. Os demais Control Planes já configurados são preservados. A gravação do JSON e do journal usa substituição atômica específica para Unix/Windows.
+`configure` adiciona ou atualiza somente o vínculo cujo nome foi informado. Os demais Control Planes já configurados são preservados. Nomes de vínculo são tratados de forma case-insensitive para atualização (`PIGE360` e `pige360` representam o mesmo vínculo lógico), preservando os arquivos de identidade/credenciais já existentes. A gravação do JSON e do journal usa substituição atômica específica para Unix/Windows.
 
-## Idempotência
+## Transporte e validação
+
+- Control Plane: HTTPS obrigatório; HTTP somente com `allow_insecure_http=true` explicitamente configurado para laboratório;
+- esquemas diferentes de HTTP/HTTPS são rejeitados;
+- Dockge: HTTP/HTTPS; loopback por padrão;
+- endpoint Dockge não-loopback exige `allow_non_loopback=true`;
+- arquivos sensíveis reutilizados entre Control Planes fazem a configuração falhar antes de iniciar o Agent.
+
+## Idempotência em duas camadas
 
 Cada ação recebida do Control Plane precisa de `action_id`. O Agent persiste o resultado em `action-journal.json`, com chave `controller + action_id`.
 
 ```text
 action_id=act-123
      ↓
-executa uma vez
+Agent verifica journal
      ↓
-persiste resultado
+chama Dockge com Idempotency-Key: act-123
      ↓
-reporta
-
-rede falhou e act-123 chegou de novo
+Dockge reserva a chave persistentemente
      ↓
-NÃO executa de novo
+executa Docker/Compose
      ↓
-reenvia resultado persistido
+Dockge persiste conclusão
+     ↓
+Agent persiste resultado local
+     ↓
+reporta ao Control Plane
 ```
 
-Para uma nova tentativa operacional o Control Plane gera outro `action_id`.
+Se a rede falhar depois do resultado local persistido, `act-123` não é executado de novo: o Agent apenas reporta novamente o journal.
+
+Se o processo do Agent cair depois de Docker/Compose concluir mas antes do journal local ser salvo, a mesma chamada chega ao Dockge com a mesma `Idempotency-Key`; uma execução concluída é respondida como replay, sem repetir a mutação.
+
+Se o Dockge tiver apenas a reserva e não houver resultado final (queda no intervalo indeterminado), ele retorna `409 idempotency_result_in_doubt` e não executa novamente de forma cega. O Control Plane deve reconciliar o estado e gerar **outro** `action_id` somente se uma nova tentativa for realmente necessária.
+
+Para uma nova tentativa operacional intencional, o Control Plane sempre gera outro `action_id`.
 
 ## Descoberta de runtime e coexistência
 
@@ -148,6 +167,8 @@ DELETE /api/v1/automation/stacks/{deployment}
 POST   /api/v1/automation/stacks/{deployment}/actions/{pull|up|down|restart|start|stop}
 GET    /api/v1/automation/stacks/{deployment}/ps
 ```
+
+Nas mutações, o Agent envia `Idempotency-Key: <action_id>`.
 
 Tokens Dockge usam scopes e namespaces. O instalador pode gerar a credencial local via CLI interna do próprio Dockge; o segredo passa ao `configure` apenas para ser materializado no arquivo protegido daquele vínculo.
 
