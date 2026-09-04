@@ -45,6 +45,15 @@ jobs:
           test -s backend/socket-handlers/twofa-socket-handler.ts
       - name: Proteger Native Agents do Dockge
         run: node ./extra/check-agent-boundaries.mjs
+      - name: Garantir retirada do Agent externo legado
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e infrastructure-agent
+          test ! -e .github/workflows/30-agent-build.yml
+          test ! -e .github/workflows/55-agent-assets.yml
+          test ! -e .github/workflows/60-agent-release.yml
+          test ! -e docs/contracts/control-plane-agent-api.md
       - name: Garantir independência operacional
         shell: bash
         run: |
@@ -52,7 +61,7 @@ jobs:
           patterns='github\.com/louislam/dockge|raw\.githubusercontent\.com/louislam/dockge|dockge\.kuma\.pet|hub\.docker\.com/r/louislam/dockge|louislam/dockge:'
           operational_paths=(
             README.md compose.yaml package.json
-            backend common frontend extra deploy docker infrastructure-agent
+            backend common frontend extra deploy docker
             .github/workflows
           )
           if grep -RInE "$patterns" \

@@ -3,6 +3,20 @@ name: 50 · Release SemVer
 on:
   push:
     branches: [main]
+    paths:
+      - 'backend/**'
+      - 'common/**'
+      - 'frontend/**'
+      - 'docker/**'
+      - 'deploy/**'
+      - 'extra/**'
+      - 'compose.yaml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'VERSION'
+      - 'tsconfig.json'
+      - '.dockerignore'
+      - '.github/workflows/50-release.yml'
   workflow_dispatch:
     inputs:
       force_bump:
