@@ -19,6 +19,7 @@ type Config struct {
 	User             string
 	Port             int
 	KeyPath          string
+	KeyPassphrase    string
 	Password         string
 	KnownHostsPath   string
 	AcceptNewHostKey bool
@@ -95,6 +96,21 @@ func hostKeyCallback(path string, acceptNew bool) (ssh.HostKeyCallback, error) {
 	}, nil
 }
 
+func parsePrivateKey(data []byte, passphrase string) (ssh.Signer, error) {
+	signer, err := ssh.ParsePrivateKey(data)
+	if err == nil {
+		return signer, nil
+	}
+	var missing *ssh.PassphraseMissingError
+	if errors.As(err, &missing) {
+		if passphrase == "" {
+			return nil, errors.New("SSH private key is encrypted; set DOCKGE_DEPLOY_SSH_KEY_PASSPHRASE")
+		}
+		return ssh.ParsePrivateKeyWithPassphrase(data, []byte(passphrase))
+	}
+	return nil, err
+}
+
 func authMethods(cfg Config) ([]ssh.AuthMethod, func(), error) {
 	var methods []ssh.AuthMethod
 	var agentConn net.Conn
@@ -107,7 +123,7 @@ func authMethods(cfg Config) ([]ssh.AuthMethod, func(), error) {
 	if cfg.KeyPath != "" {
 		keyPath := expandHome(cfg.KeyPath)
 		if data, err := os.ReadFile(keyPath); err == nil {
-			signer, err := ssh.ParsePrivateKey(data)
+			signer, err := parsePrivateKey(data, cfg.KeyPassphrase)
 			if err != nil {
 				cleanup()
 				return nil, func() {}, fmt.Errorf("parse SSH private key %s: %w", keyPath, err)
