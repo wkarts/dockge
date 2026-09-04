@@ -6,6 +6,7 @@ import { Router } from "../router";
 import { DockgeServer } from "../dockge-server";
 import { Stack } from "../stack";
 import { apiAuth, apiPrincipal, assertStackAllowed, audit } from "../api/api-token-auth";
+import { resolveComposeEnv, writePrivateFileAtomic } from "../api/stack-file-store";
 
 interface StackBody {
     compose_yaml?: string;
@@ -39,12 +40,6 @@ async function runCompose(server: DockgeServer, name: string, args: string[]) {
         throw Object.assign(new Error(stderr || stdout || "docker compose failed"), { statusCode: 502 });
     }
     return { stdout, stderr };
-}
-
-function writeEnv(server: DockgeServer, name: string, content: string): void {
-    const file = path.join(server.stacksDir, name, ".env");
-    fs.writeFileSync(file, content, { mode: 0o600 });
-    try { fs.chmodSync(file, 0o600); } catch { /* best effort */ }
 }
 
 export class ApiV1Router extends Router {
@@ -94,7 +89,6 @@ export class ApiV1Router extends Router {
                 requireValidStackName(name); assertStackAllowed(res, name);
                 const body = req.body as StackBody;
                 if (!body.compose_yaml || typeof body.compose_yaml !== "string") return res.status(400).json({ error: "compose_yaml_required" });
-                if (body.compose_env !== undefined && typeof body.compose_env !== "string") return res.status(400).json({ error: "compose_env_must_be_string" });
 
                 const exists = await Stack.composeFileExists(server.stacksDir, name);
                 if (exists && !isApiManaged(server, name)) {
@@ -102,20 +96,26 @@ export class ApiV1Router extends Router {
                     if (!body.adopt || !principal.scopes.has("stacks:adopt")) return res.status(409).json({ error: "external_stack_requires_explicit_adoption" });
                 }
 
-                const stack = new Stack(server, name, body.compose_yaml, body.compose_env || "");
+                // Em updates, compose_env ausente preserva o .env atual. Uma
+                // string vazia explícita continua sendo uma solicitação válida
+                // para limpar o arquivo.
+                const composeEnv = resolveComposeEnv(server.stacksDir, name, body.compose_env, exists);
+                const stack = new Stack(server, name, body.compose_yaml, composeEnv);
                 await stack.save(!exists);
-                writeEnv(server, name, body.compose_env || "");
+                writePrivateFileAtomic(path.join(server.stacksDir, name, ".env"), composeEnv);
+
                 const marker = markerPath(server, name);
                 let createdAt = new Date().toISOString();
                 if (fs.existsSync(marker)) {
-                    try { createdAt = JSON.parse(fs.readFileSync(marker, "utf8")).created_at || createdAt; } catch { /* ignore */ }
+                    try { createdAt = JSON.parse(fs.readFileSync(marker, "utf8")).created_at || createdAt; } catch { /* ignore malformed historical marker */ }
                 }
-                fs.writeFileSync(marker, JSON.stringify({
+                writePrivateFileAtomic(marker, JSON.stringify({
                     owner: body.owner || apiPrincipal(res).name,
                     managed_by: "dockge-api-v1",
                     created_at: createdAt,
                     updated_at: new Date().toISOString(),
-                }, null, 2) + "\n", { mode: 0o600 });
+                }, null, 2) + "\n");
+
                 audit(res, exists ? "stack.update" : "stack.create", name, "succeeded", { adopted: exists && !!body.adopt });
                 res.status(exists ? 200 : 201).json({ ok: true, name, adopted: exists && !!body.adopt });
             } catch (error) { audit(res, "stack.apply", name, "failed"); errorResponse(error, res); }
@@ -153,6 +153,7 @@ export class ApiV1Router extends Router {
         router.get(`${base}/stacks/:name/ps`, apiAuth("stacks:read"), async (req, res) => {
             try {
                 requireValidStackName(req.params.name); assertStackAllowed(res, req.params.name);
+                if (!(await Stack.composeFileExists(server.stacksDir, req.params.name))) return res.status(404).json({ error: "stack_not_found" });
                 const stack = new Stack(server, req.params.name);
                 res.json({ name: req.params.name, containers: await stack.ps() });
             } catch (error) { errorResponse(error, res); }
@@ -161,7 +162,9 @@ export class ApiV1Router extends Router {
         router.get(`${base}/stacks/:name/logs`, apiAuth("stacks:read"), async (req, res) => {
             try {
                 requireValidStackName(req.params.name); assertStackAllowed(res, req.params.name);
-                const tail = Math.min(Math.max(Number(req.query.tail || 200), 1), 2000);
+                if (!(await Stack.composeFileExists(server.stacksDir, req.params.name))) return res.status(404).json({ error: "stack_not_found" });
+                const tailValue = Number(req.query.tail || 200);
+                const tail = Number.isFinite(tailValue) ? Math.min(Math.max(Math.trunc(tailValue), 1), 2000) : 200;
                 const output = await runCompose(server, req.params.name, ["logs", "--no-color", "--tail", String(tail)]);
                 res.json({ name: req.params.name, tail, ...output });
             } catch (error) { errorResponse(error, res); }
