@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 concurrency:
@@ -50,14 +50,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # A documentação pode mencionar docker.sock para explicar a proibição;
-          # runtime, compose, backend e frontend não podem depender dele.
           ! grep -RIn '/var/run/docker.sock' \
             dockge-manager/compose.yaml \
             dockge-manager/Dockerfile \
             dockge-manager/backend \
             dockge-manager/frontend/src
+          ! grep -RInE 'backend/agent-|agent-manager|common/agent-socket' \
+            dockge-manager/backend \
+            dockge-manager/frontend/src \
+            dockge-manager/compose.yaml
           grep -n '/api/v1/automation' dockge-manager/backend/app/dockge_client.py >/dev/null
+          grep -n 'follow_redirects=False' dockge-manager/backend/app/dockge_client.py >/dev/null
+          test -s dockge-manager/migrations/versions/0002_deployment_safety.py
       - name: Build image smoke test
         run: docker build -f dockge-manager/Dockerfile dockge-manager -t dockge-manager:test
 
@@ -96,3 +100,27 @@ jobs:
             ghcr.io/${{ steps.meta.outputs.owner }}/dockge-manager:sha-${{ steps.meta.outputs.short_sha }}
           provenance: true
           sbom: true
+      - name: Publish independent Manager release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          IMAGE_OWNER: ${{ steps.meta.outputs.owner }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="dockge-manager-v$VERSION"
+          cat > /tmp/dockge-manager-release.md <<EOF
+          Dockge Manager $VERSION
+
+          Imagem multiarch:
+          ghcr.io/$IMAGE_OWNER/dockge-manager:$VERSION
+
+          Management plane independente do Dockge Core, com FastAPI, PostgreSQL/Alembic, Vue PWA, múltiplos Dockge Targets, deployments verificados, snapshots, auditoria e rollback.
+          EOF
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --title "Dockge Manager $VERSION" --notes-file /tmp/dockge-manager-release.md
+          else
+            gh release create "$tag" --target "$GITHUB_SHA" --title "Dockge Manager $VERSION" --notes-file /tmp/dockge-manager-release.md
+          fi
+          gh release view "$tag" --json tagName --jq '.tagName' | grep -Fxq "$tag"

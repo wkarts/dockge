@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from .config import get_settings
 from .dependencies import CurrentUser, Db
+from .deployment_engine import StackVerificationError, verify_stack
 from .dockge_client import DockgeRequestError, validate_target_url
 from .models import (
     Application,
@@ -16,6 +17,7 @@ from .models import (
     CredentialRef,
     Deployment,
     DeploymentRevision,
+    DeploymentSnapshot,
     DockgeTarget,
     Environment,
     HealthSnapshot,
@@ -29,6 +31,7 @@ from .schemas import (
     AuditEventOut,
     DeploymentCreate,
     DeploymentOut,
+    DeploymentSnapshotOut,
     EnvironmentCreate,
     EnvironmentOut,
     HealthSnapshotOut,
@@ -87,6 +90,93 @@ def default_environment(db: Db) -> Environment:
 def translate_dockge_error(exc: DockgeRequestError) -> HTTPException:
     status_code = exc.status_code if 400 <= exc.status_code < 600 else 502
     return HTTPException(status_code=status_code, detail=exc.detail)
+
+
+def runtime_snapshot(db: Db, deployment: Deployment, client, revision: int, reason: str) -> DeploymentSnapshot:
+    existed = True
+    stack: dict = {}
+    try:
+        stack = client.stack(deployment.stack_name)
+    except DockgeRequestError as exc:
+        if exc.status_code == 404:
+            existed = False
+        else:
+            raise
+
+    compose_yaml = str(stack.get("composeYAML") or "") if existed else ""
+    compose_env = str(stack.get("composeENV") or "") if existed else ""
+    snapshot = DeploymentSnapshot(
+        deployment_id=deployment.id,
+        captured_for_revision=revision,
+        existed=existed,
+        api_managed=bool(stack.get("api_managed", False)) if existed else False,
+        compose_yaml=compose_yaml,
+        compose_env_ciphertext=secret_box().encrypt(compose_env),
+        reason=reason,
+    )
+    db.add(snapshot)
+    db.flush()
+    return snapshot
+
+
+def restore_runtime_snapshot(
+    db: Db,
+    user: CurrentUser,
+    target: DockgeTarget,
+    deployment: Deployment,
+    client,
+    snapshot: DeploymentSnapshot,
+) -> dict:
+    if snapshot.existed:
+        payload = {
+            "compose_yaml": snapshot.compose_yaml,
+            "compose_env": secret_box().decrypt(snapshot.compose_env_ciphertext),
+            "owner": user.email,
+            # If an external stack was explicitly adopted by the failed
+            # deployment, the marker now exists. Restoring through the API must
+            # therefore explicitly acknowledge that adoption. The previous
+            # Compose/.env are restored, while the explicit adoption remains.
+            "adopt": not snapshot.api_managed,
+        }
+        run_mutation(
+            db,
+            target,
+            user.email,
+            deployment.stack_name,
+            "auto-rollback.apply",
+            lambda key: client.apply_stack(deployment.stack_name, payload, key),
+        )
+        run_mutation(
+            db,
+            target,
+            user.email,
+            deployment.stack_name,
+            "auto-rollback.up",
+            lambda key: client.action(deployment.stack_name, "up", key),
+        )
+        settings = get_settings()
+        ps = verify_stack(
+            client,
+            deployment.stack_name,
+            settings.deployment_verify_attempts,
+            settings.deployment_verify_interval_seconds,
+        )
+        snapshot.restored_at = datetime.now(timezone.utc)
+        return {"restored": "previous_runtime", "ps": ps, "adoption_persisted": not snapshot.api_managed}
+
+    # The failed deployment created a stack that did not exist before. Delete
+    # only that API-managed stack. Dockge's DELETE intentionally does not remove
+    # named volumes.
+    result = run_mutation(
+        db,
+        target,
+        user.email,
+        deployment.stack_name,
+        "auto-rollback.delete-created-stack",
+        lambda key: client.delete_stack(deployment.stack_name, key),
+    )
+    snapshot.restored_at = datetime.now(timezone.utc)
+    return {"restored": "stack_absence", "delete": result}
 
 
 @router.post("/auth/login", response_model=LoginResponse)
@@ -384,6 +474,7 @@ def create_deployment(body: DeploymentCreate, db: Db, user: CurrentUser) -> Depl
         stack_name=body.stack_name,
         status="DRAFT",
         current_revision=1,
+        active_revision=0,
     )
     db.add(deployment)
     db.flush()
@@ -406,6 +497,19 @@ def create_deployment(body: DeploymentCreate, db: Db, user: CurrentUser) -> Depl
     return deployment
 
 
+@router.get("/deployments/{deployment_id}/revisions", response_model=list[RevisionOut])
+def list_revisions(deployment_id: str, db: Db, user: CurrentUser) -> list[DeploymentRevision]:
+    del user
+    deployment_or_404(db, deployment_id)
+    return list(
+        db.scalars(
+            select(DeploymentRevision)
+            .where(DeploymentRevision.deployment_id == deployment_id)
+            .order_by(DeploymentRevision.revision.desc())
+        )
+    )
+
+
 @router.post("/deployments/{deployment_id}/revisions", response_model=RevisionOut, status_code=201)
 def create_revision(deployment_id: str, body: RevisionCreate, db: Db, user: CurrentUser) -> DeploymentRevision:
     deployment = deployment_or_404(db, deployment_id)
@@ -420,17 +524,43 @@ def create_revision(deployment_id: str, body: RevisionCreate, db: Db, user: Curr
     db.add(revision)
     deployment.current_revision = next_revision
     deployment.status = "DRAFT"
+    deployment.last_error = ""
     audit(db, user.email, "deployment.revision.create", target_id=deployment.target_id, resource=deployment.stack_name, payload={"revision": next_revision})
     db.commit()
     db.refresh(revision)
     return revision
 
 
+@router.get("/deployments/{deployment_id}/snapshots", response_model=list[DeploymentSnapshotOut])
+def list_deployment_snapshots(deployment_id: str, db: Db, user: CurrentUser) -> list[DeploymentSnapshot]:
+    del user
+    deployment_or_404(db, deployment_id)
+    return list(
+        db.scalars(
+            select(DeploymentSnapshot)
+            .where(DeploymentSnapshot.deployment_id == deployment_id)
+            .order_by(DeploymentSnapshot.created_at.desc())
+        )
+    )
+
+
 def execute_revision(db: Db, user: CurrentUser, deployment: Deployment, revision: DeploymentRevision, rollback: bool = False) -> dict:
     target = target_or_404(db, deployment.target_id)
     client = client_for(target, secret_box())
+    settings = get_settings()
+    previous_active = deployment.active_revision
+    previous_current = deployment.current_revision
+    snapshot = runtime_snapshot(
+        db,
+        deployment,
+        client,
+        revision.revision,
+        "pre-rollback" if rollback else "pre-deploy",
+    )
     deployment.status = "ROLLING_BACK" if rollback else "DEPLOYING"
+    deployment.last_error = ""
     db.flush()
+
     apply_payload = {
         "compose_yaml": revision.compose_yaml,
         "compose_env": secret_box().decrypt(revision.compose_env_ciphertext),
@@ -438,6 +568,7 @@ def execute_revision(db: Db, user: CurrentUser, deployment: Deployment, revision
         "adopt": revision.adopt_external,
     }
     prefix = "rollback" if rollback else "deploy"
+    mutated = False
     try:
         run_mutation(
             db,
@@ -447,6 +578,7 @@ def execute_revision(db: Db, user: CurrentUser, deployment: Deployment, revision
             f"{prefix}.apply",
             lambda key: client.apply_stack(deployment.stack_name, apply_payload, key),
         )
+        mutated = True
         run_mutation(
             db,
             target,
@@ -457,31 +589,101 @@ def execute_revision(db: Db, user: CurrentUser, deployment: Deployment, revision
         )
         deployment.status = "VERIFYING"
         db.flush()
-        ps = client.ps(deployment.stack_name)
+        ps = verify_stack(
+            client,
+            deployment.stack_name,
+            settings.deployment_verify_attempts,
+            settings.deployment_verify_interval_seconds,
+        )
         deployment.current_revision = revision.revision
+        deployment.active_revision = revision.revision
         deployment.status = "ROLLED_BACK" if rollback else "HEALTHY"
+        deployment.last_error = ""
+        deployment.last_deployed_at = datetime.now(timezone.utc)
         audit(
             db,
             user.email,
             f"deployment.{prefix}.succeeded",
             target_id=target.id,
             resource=deployment.stack_name,
-            payload={"revision": revision.revision},
+            payload={"revision": revision.revision, "snapshot_id": snapshot.id},
         )
         db.commit()
-        return {"ok": True, "deployment_id": deployment.id, "revision": revision.revision, "status": deployment.status, "ps": ps}
-    except DockgeRequestError as exc:
-        deployment.status = "FAILED"
+        return {
+            "ok": True,
+            "deployment_id": deployment.id,
+            "revision": revision.revision,
+            "active_revision": deployment.active_revision,
+            "status": deployment.status,
+            "ps": ps,
+        }
+    except (DockgeRequestError, StackVerificationError) as exc:
+        if isinstance(exc, DockgeRequestError):
+            original_status = exc.status_code
+            original_detail = exc.detail
+        else:
+            original_status = 502
+            original_detail = {"error": "deployment_verification_failed", "reason": exc.reason, "ps": exc.payload}
+
+        deployment.last_error = str(original_detail)[:4000]
+        rollback_result: dict | None = None
+        rollback_error: str | None = None
+        if mutated:
+            try:
+                deployment.status = "ROLLING_BACK"
+                db.flush()
+                rollback_result = restore_runtime_snapshot(db, user, target, deployment, client, snapshot)
+                deployment.status = "ROLLED_BACK"
+                deployment.active_revision = previous_active
+                deployment.current_revision = previous_current
+            except (DockgeRequestError, StackVerificationError, RuntimeError) as rollback_exc:
+                rollback_error = str(rollback_exc)
+                deployment.status = "ROLLBACK_FAILED"
+        else:
+            # A precondition/API failure before the first successful mutation
+            # must not adopt, delete or otherwise alter the target stack.
+            deployment.status = "FAILED"
+
         audit(
             db,
             user.email,
             f"deployment.{prefix}.failed",
             target_id=target.id,
             resource=deployment.stack_name,
-            payload={"revision": revision.revision, "status": exc.status_code},
+            payload={
+                "revision": revision.revision,
+                "status": original_status,
+                "snapshot_id": snapshot.id,
+                "mutated": mutated,
+                "rollback": rollback_result,
+                "rollback_error": rollback_error,
+            },
         )
         db.commit()
-        raise translate_dockge_error(exc) from exc
+
+        if rollback_result is not None:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "deployment_failed_and_runtime_was_restored",
+                    "cause": original_detail,
+                    "status": deployment.status,
+                    "rollback": rollback_result,
+                },
+            ) from exc
+        if rollback_error is not None:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "deployment_failed_and_rollback_failed",
+                    "cause": original_detail,
+                    "rollback_error": rollback_error,
+                    "status": deployment.status,
+                },
+            ) from exc
+        if isinstance(exc, DockgeRequestError):
+            raise translate_dockge_error(exc) from exc
+        raise HTTPException(status_code=502, detail=original_detail) from exc
 
 
 @router.post("/deployments/{deployment_id}/deploy")
@@ -501,11 +703,13 @@ def deploy_current(deployment_id: str, db: Db, user: CurrentUser) -> dict:
 @router.post("/deployments/{deployment_id}/rollback")
 def rollback_deployment(deployment_id: str, db: Db, user: CurrentUser) -> dict:
     deployment = deployment_or_404(db, deployment_id)
+    if deployment.active_revision <= 1:
+        raise HTTPException(status_code=409, detail="no_previous_active_revision_available")
     revision = db.scalar(
         select(DeploymentRevision)
         .where(
             DeploymentRevision.deployment_id == deployment.id,
-            DeploymentRevision.revision < deployment.current_revision,
+            DeploymentRevision.revision < deployment.active_revision,
         )
         .order_by(DeploymentRevision.revision.desc())
         .limit(1)
