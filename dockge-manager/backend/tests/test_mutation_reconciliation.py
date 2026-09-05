@@ -2,6 +2,7 @@ import base64
 import os
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 os.environ.setdefault("DOCKGE_MANAGER_DATABASE_URL", "sqlite:///./test-manager.db")
@@ -11,10 +12,10 @@ os.environ.setdefault("DOCKGE_MANAGER_ADMIN_PASSWORD", "test-password")
 os.environ.setdefault("DOCKGE_MANAGER_HEALTH_POLL_ENABLED", "false")
 os.environ.setdefault("DOCKGE_MANAGER_ALLOW_HTTP_TARGETS", "true")
 
-from app.api import restore_runtime_snapshot  # noqa: E402
-from app.dockge_client import DockgeRequestError  # noqa: E402
+from app import dockge_client, service  # noqa: E402
+from app.api import restore_runtime_snapshot, secret_box  # noqa: E402
+from app.dockge_client import DockgeClient, DockgeRequestError  # noqa: E402
 from app.models import Operation  # noqa: E402
-from app import service  # noqa: E402
 
 
 class FakeDb:
@@ -30,6 +31,97 @@ class FakeDb:
 
 def operation_from(db: FakeDb) -> Operation:
     return next(item for item in db.items if isinstance(item, Operation))
+
+
+class FakeHTTPResponse:
+    def __init__(self, status_code: int, payload: dict) -> None:
+        self.status_code = status_code
+        self._payload = payload
+        self.text = ""
+
+    def json(self) -> dict:
+        return self._payload
+
+
+def install_http_client(monkeypatch: pytest.MonkeyPatch, *, error: Exception | None = None, response: FakeHTTPResponse | None = None) -> None:
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            assert kwargs["follow_redirects"] is False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def request(self, *args, **kwargs):
+            if error is not None:
+                raise error
+            assert response is not None
+            return response
+
+    monkeypatch.setattr(dockge_client.httpx, "Client", FakeClient)
+
+
+def test_client_classifies_connect_failure_as_not_mutated(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_http_client(monkeypatch, error=httpx.ConnectError("connect failed"))
+    client = DockgeClient("http://127.0.0.1:5001", "x" * 32, verify_tls=False)
+
+    with pytest.raises(DockgeRequestError) as raised:
+        client.action("demo", "restart", "idem-connect")
+
+    assert raised.value.transport_stage == "connect"
+    assert raised.value.may_have_mutated is False
+    assert raised.value.detail["error"] == "dockge_unreachable"
+
+
+def test_client_classifies_read_timeout_mutation_as_uncertain(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_http_client(monkeypatch, error=httpx.ReadTimeout("response lost"))
+    client = DockgeClient("http://127.0.0.1:5001", "x" * 32, verify_tls=False)
+
+    with pytest.raises(DockgeRequestError) as raised:
+        client.action("demo", "restart", "idem-read-timeout")
+
+    assert raised.value.transport_stage == "uncertain"
+    assert raised.value.may_have_mutated is True
+    assert raised.value.detail["error"] == "dockge_transport_uncertain"
+
+
+def test_client_classifies_read_timeout_get_as_not_mutated(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_http_client(monkeypatch, error=httpx.ReadTimeout("response lost"))
+    client = DockgeClient("http://127.0.0.1:5001", "x" * 32, verify_tls=False)
+
+    with pytest.raises(DockgeRequestError) as raised:
+        client.stack("demo")
+
+    assert raised.value.transport_stage == "uncertain"
+    assert raised.value.may_have_mutated is False
+
+
+def test_client_classifies_500_mutation_as_potentially_mutated(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_http_client(monkeypatch, response=FakeHTTPResponse(500, {"error": "compose_failed"}))
+    client = DockgeClient("http://127.0.0.1:5001", "x" * 32, verify_tls=False)
+
+    with pytest.raises(DockgeRequestError) as raised:
+        client.action("demo", "up", "idem-500")
+
+    assert raised.value.status_code == 500
+    assert raised.value.may_have_mutated is True
+
+
+def test_client_classifies_core_idempotency_in_doubt(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_http_client(
+        monkeypatch,
+        response=FakeHTTPResponse(409, {"error": "idempotency_result_in_doubt"}),
+    )
+    client = DockgeClient("http://127.0.0.1:5001", "x" * 32, verify_tls=False)
+
+    with pytest.raises(DockgeRequestError) as raised:
+        client.apply_stack("demo", {"compose_yaml": "services: {}"}, "idem-doubt")
+
+    assert raised.value.status_code == 409
+    assert raised.value.idempotency_in_doubt is True
+    assert raised.value.may_have_mutated is True
 
 
 def test_run_mutation_retries_with_exact_same_idempotency_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -129,6 +221,49 @@ def test_connect_stage_failure_is_definitive_after_retries(monkeypatch: pytest.M
     assert operation_from(db).status == "FAILED"
 
 
+def test_restore_existing_snapshot_noops_when_runtime_is_already_restored() -> None:
+    encrypted_env = secret_box().encrypt("APP_MODE=stable\n")
+
+    class Client:
+        def stack(self, name: str) -> dict:
+            assert name == "demo"
+            return {
+                "name": "demo",
+                "api_managed": True,
+                "composeYAML": "services:\n  app:\n    image: example/app:1\n",
+                "composeENV": "APP_MODE=stable\n",
+            }
+
+        def ps(self, name: str) -> dict:
+            assert name == "demo"
+            return {"containers": [{"Name": "demo-app", "State": "running", "Health": "healthy"}]}
+
+        def apply_stack(self, name: str, body: dict, key: str) -> dict:  # pragma: no cover - must never run
+            raise AssertionError("already-restored runtime must not be re-applied")
+
+        def action(self, name: str, action: str, key: str) -> dict:  # pragma: no cover - must never run
+            raise AssertionError("already-restored runtime must not be restarted")
+
+    snapshot = SimpleNamespace(
+        existed=True,
+        api_managed=True,
+        compose_yaml="services:\n  app:\n    image: example/app:1\n",
+        compose_env_ciphertext=encrypted_env,
+        restored_at=None,
+    )
+    result = restore_runtime_snapshot(
+        FakeDb(),
+        SimpleNamespace(email="admin@example.com"),
+        SimpleNamespace(id="target-4"),
+        SimpleNamespace(stack_name="demo"),
+        Client(),
+        snapshot,
+    )
+
+    assert result["restored"] == "previous_runtime_already_present"
+    assert snapshot.restored_at is not None
+
+
 def test_restore_absent_snapshot_does_not_delete_when_request_never_mutated() -> None:
     class Client:
         def stack(self, name: str) -> dict:
@@ -142,7 +277,7 @@ def test_restore_absent_snapshot_does_not_delete_when_request_never_mutated() ->
     result = restore_runtime_snapshot(
         FakeDb(),
         SimpleNamespace(email="admin@example.com"),
-        SimpleNamespace(id="target-4"),
+        SimpleNamespace(id="target-5"),
         SimpleNamespace(stack_name="demo"),
         Client(),
         snapshot,
@@ -166,7 +301,7 @@ def test_restore_absent_snapshot_refuses_to_delete_external_stack() -> None:
         restore_runtime_snapshot(
             FakeDb(),
             SimpleNamespace(email="admin@example.com"),
-            SimpleNamespace(id="target-5"),
+            SimpleNamespace(id="target-6"),
             SimpleNamespace(stack_name="demo"),
             Client(),
             snapshot,
