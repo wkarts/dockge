@@ -13,9 +13,19 @@ from .config import get_settings
 class DockgeRequestError(RuntimeError):
     status_code: int
     detail: Any
+    transport_stage: str | None = None
+    may_have_mutated: bool = False
 
     def __str__(self) -> str:
         return f"Dockge API returned HTTP {self.status_code}: {self.detail}"
+
+    @property
+    def idempotency_in_doubt(self) -> bool:
+        return isinstance(self.detail, dict) and self.detail.get("error") == "idempotency_result_in_doubt"
+
+    @property
+    def is_transport_error(self) -> bool:
+        return self.transport_stage is not None
 
 
 def validate_target_url(value: str) -> str:
@@ -61,17 +71,49 @@ class DockgeClient:
                     json=json,
                     params=params,
                 )
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
+            # A conexão não chegou ao ponto em que uma resposta do Dockge pudesse
+            # ser perdida. Uma repetição com a mesma Idempotency-Key continua
+            # segura e não exige assumir que houve mutação remota.
+            raise DockgeRequestError(
+                503,
+                {"error": "dockge_unreachable", "message": str(exc), "transport_stage": "connect"},
+                transport_stage="connect",
+                may_have_mutated=False,
+            ) from exc
         except httpx.HTTPError as exc:
-            raise DockgeRequestError(503, {"error": "dockge_unreachable", "message": str(exc)}) from exc
+            # Read/write/protocol failures podem ocorrer depois que o servidor
+            # recebeu a requisição. Para mutações, o resultado deve ser tratado
+            # como potencialmente aplicado até a Idempotency-Key reconciliar.
+            uncertain = idempotency_key is not None
+            raise DockgeRequestError(
+                503,
+                {"error": "dockge_transport_uncertain", "message": str(exc), "transport_stage": "uncertain"},
+                transport_stage="uncertain",
+                may_have_mutated=uncertain,
+            ) from exc
 
         if 300 <= response.status_code < 400:
-            raise DockgeRequestError(response.status_code, {"error": "dockge_redirect_blocked"})
+            raise DockgeRequestError(
+                response.status_code,
+                {"error": "dockge_redirect_blocked"},
+                may_have_mutated=idempotency_key is not None,
+            )
         try:
             payload: Any = response.json()
         except ValueError:
             payload = {"raw": response.text[-4096:]}
         if response.status_code >= 400:
-            raise DockgeRequestError(response.status_code, payload)
+            in_doubt = isinstance(payload, dict) and payload.get("error") == "idempotency_result_in_doubt"
+            # O Core conclui e persiste respostas 4xx idempotentes. Já 5xx
+            # preservam a reserva fail-closed, pois uma mutação pode ter sido
+            # parcialmente executada antes da falha.
+            may_have_mutated = bool(idempotency_key) and (response.status_code >= 500 or in_doubt)
+            raise DockgeRequestError(
+                response.status_code,
+                payload,
+                may_have_mutated=may_have_mutated,
+            )
         return payload
 
     def health(self) -> dict:
