@@ -10,8 +10,22 @@ func TestInstallScriptRefusesOverwrite(t *testing.T) {
 	if !strings.Contains(script, "Refusing to overwrite") {
 		t.Fatal("install script must refuse an existing installation")
 	}
+	for _, filename := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
+		if !strings.Contains(script, filename) {
+			t.Fatalf("install guard must detect %q", filename)
+		}
+	}
 	if !strings.Contains(script, "docker compose up -d --no-deps dockge") {
 		t.Fatal("install must recreate only Dockge")
+	}
+}
+
+func TestDetectSupportsAllStandardComposeFilenames(t *testing.T) {
+	script := DetectScript("/opt/dockge")
+	for _, filename := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
+		if !strings.Contains(script, filename) {
+			t.Fatalf("detect script missing %q", filename)
+		}
 	}
 }
 
@@ -43,8 +57,8 @@ func TestMigrationPreservesStacksAndRollsBack(t *testing.T) {
 		"trap rollback",
 		"source-compose",
 		"data.tar.gz",
-		"docker compose stop dockge",
-		"docker compose up -d --no-deps dockge",
+		"docker compose -f \"$source_name\" stop dockge",
+		"docker compose -f \"$path/compose.yaml\" up -d --no-deps dockge",
 		"ghcr.io/wkarts/dockge",
 	}
 	for _, value := range required {
@@ -52,9 +66,31 @@ func TestMigrationPreservesStacksAndRollsBack(t *testing.T) {
 			t.Fatalf("migration script missing %q", value)
 		}
 	}
+	for _, filename := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
+		if !strings.Contains(script, filename) {
+			t.Fatalf("migration script must support source %q", filename)
+		}
+	}
 	for _, forbidden := range []string{"down -v", "system prune", "rm -rf \"$stacks\""} {
 		if strings.Contains(script, forbidden) {
 			t.Fatalf("migration script contains forbidden destructive operation %q", forbidden)
+		}
+	}
+}
+
+func TestMigrationPlanIsReadOnlyAndSupportsComposeVariants(t *testing.T) {
+	script := MigrationPlanScript("/opt/dockge", "/opt/stacks", "1.6.1", "127.0.0.1", 5001)
+	for _, filename := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
+		if !strings.Contains(script, filename) {
+			t.Fatalf("migration plan missing %q", filename)
+		}
+	}
+	if !strings.Contains(script, "read_only=true") {
+		t.Fatal("migration plan must declare read_only=true")
+	}
+	for _, forbidden := range []string{"docker compose stop", "docker compose up", "docker compose pull", "rm -f"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("migration plan contains mutation %q", forbidden)
 		}
 	}
 }
