@@ -38,13 +38,13 @@ jobs:
           git diff --exit-code -- go.mod go.sum
           go test ./...
           go vet ./...
-      - name: Build all platforms
+      - name: Build and package all platforms
         shell: bash
         working-directory: dockge-deploy
         run: |
           set -euo pipefail
           version="$(tr -d '[:space:]' < VERSION)"
-          mkdir -p dist
+          mkdir -p dist/package
           build() {
             os="$1"; arch="$2"; ext="$3"
             out="dist/dockge-deploy-${version}-${os}-${arch}${ext}"
@@ -52,6 +52,7 @@ jobs:
               -trimpath \
               -ldflags "-s -w -X github.com/wkarts/dockge/dockge-deploy/internal/version.Version=$version" \
               -o "$out" ./cmd/dockge-deploy
+            if [ "$os" != windows ]; then chmod 0755 "$out"; fi
           }
           build linux amd64 ""
           build linux arm64 ""
@@ -59,7 +60,39 @@ jobs:
           build windows arm64 ".exe"
           build darwin amd64 ""
           build darwin arm64 ""
-          (cd dist && sha256sum * > SHA256SUMS.txt)
+
+          for target in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+            os="${target%-*}"
+            arch="${target#*-}"
+            binary="dockge-deploy-${version}-${os}-${arch}"
+            tar -C dist -czf "dist/package/${binary}.tar.gz" "$binary"
+          done
+
+          for arch in amd64 arm64; do
+            binary="dockge-deploy-${version}-windows-${arch}.exe"
+            (cd dist && zip -q "package/dockge-deploy-${version}-windows-${arch}.zip" "$binary")
+          done
+
+          mv dist/package/* dist/
+          rmdir dist/package
+          (cd dist && sha256sum dockge-deploy-* > SHA256SUMS.txt)
+
+          expected=(
+            "dockge-deploy-${version}-linux-amd64"
+            "dockge-deploy-${version}-linux-arm64"
+            "dockge-deploy-${version}-windows-amd64.exe"
+            "dockge-deploy-${version}-windows-arm64.exe"
+            "dockge-deploy-${version}-darwin-amd64"
+            "dockge-deploy-${version}-darwin-arm64"
+            "dockge-deploy-${version}-linux-amd64.tar.gz"
+            "dockge-deploy-${version}-linux-arm64.tar.gz"
+            "dockge-deploy-${version}-windows-amd64.zip"
+            "dockge-deploy-${version}-windows-arm64.zip"
+            "dockge-deploy-${version}-darwin-amd64.tar.gz"
+            "dockge-deploy-${version}-darwin-arm64.tar.gz"
+            "SHA256SUMS.txt"
+          )
+          for asset in "${expected[@]}"; do test -s "dist/$asset"; done
       - uses: actions/upload-artifact@v4
         with:
           name: dockge-deploy-binaries
@@ -81,15 +114,41 @@ jobs:
       - name: Publish independent Dockge Deploy release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
           version="$(tr -d '[:space:]' < dockge-deploy/VERSION)"
           tag="dockge-deploy-v$version"
-          if ! gh release view "$tag" >/dev/null 2>&1; then
+          cat > /tmp/dockge-deploy-release.md <<EOF
+          Dockge Deploy $version
+
+          Ferramenta independente para bootstrap, migração, upgrade, recuperação e administração de Dockge.
+
+          Inclui binários nativos e pacotes portáveis para Linux, Windows e macOS em amd64/arm64, além de SHA256SUMS.txt.
+
+          Esta release é independente do Dockge Core e não altera a release SemVer do orquestrador.
+          EOF
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --title "Dockge Deploy $version" --notes-file /tmp/dockge-deploy-release.md
+          else
             gh release create "$tag" \
               --target "$GITHUB_SHA" \
               --title "Dockge Deploy $version" \
-              --notes "Binários multiplataforma do Dockge Deploy. Este release é independente do Dockge Core."
+              --notes-file /tmp/dockge-deploy-release.md
           fi
           gh release upload "$tag" dist/* --clobber
+
+          mapfile -t published < <(gh release view "$tag" --json assets --jq '.assets[].name')
+          required=(
+            "dockge-deploy-${version}-linux-amd64.tar.gz"
+            "dockge-deploy-${version}-linux-arm64.tar.gz"
+            "dockge-deploy-${version}-windows-amd64.zip"
+            "dockge-deploy-${version}-windows-arm64.zip"
+            "dockge-deploy-${version}-darwin-amd64.tar.gz"
+            "dockge-deploy-${version}-darwin-arm64.tar.gz"
+            "SHA256SUMS.txt"
+          )
+          for asset in "${required[@]}"; do
+            printf '%s\n' "${published[@]}" | grep -Fxq "$asset" || { echo "Missing release asset: $asset" >&2; exit 40; }
+          done
