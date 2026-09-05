@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     allow_http_targets: bool = False
     health_poll_enabled: bool = True
     health_poll_seconds: int = 60
+    deployment_verify_attempts: int = 8
+    deployment_verify_interval_seconds: float = 2.0
     static_dir: str = "/app/static"
 
     def validate_runtime_secrets(self) -> None:
@@ -45,6 +47,10 @@ class Settings(BaseSettings):
             missing.append("DOCKGE_MANAGER_ADMIN_PASSWORD")
         if missing:
             raise RuntimeError("Required Manager secrets are missing: " + ", ".join(missing))
+        if self.deployment_verify_attempts < 1 or self.deployment_verify_attempts > 60:
+            raise RuntimeError("DOCKGE_MANAGER_DEPLOYMENT_VERIFY_ATTEMPTS must be between 1 and 60")
+        if self.deployment_verify_interval_seconds < 0 or self.deployment_verify_interval_seconds > 30:
+            raise RuntimeError("DOCKGE_MANAGER_DEPLOYMENT_VERIFY_INTERVAL_SECONDS must be between 0 and 30")
 
 
 @lru_cache
