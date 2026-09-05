@@ -103,15 +103,24 @@ jobs:
       - name: Publish independent Manager release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           VERSION: ${{ steps.meta.outputs.version }}
           IMAGE_OWNER: ${{ steps.meta.outputs.owner }}
         shell: bash
         run: |
           set -euo pipefail
           tag="dockge-manager-v$VERSION"
-          notes="Dockge Manager $VERSION\n\nImagem multiarch: ghcr.io/$IMAGE_OWNER/dockge-manager:$VERSION\n\nManagement plane independente do Dockge Core; FastAPI + PostgreSQL/Alembic + Vue PWA, com deployments verificados, snapshots e rollback."
+          cat > /tmp/dockge-manager-release.md <<EOF
+          Dockge Manager $VERSION
+
+          Imagem multiarch:
+          ghcr.io/$IMAGE_OWNER/dockge-manager:$VERSION
+
+          Management plane independente do Dockge Core, com FastAPI, PostgreSQL/Alembic, Vue PWA, múltiplos Dockge Targets, deployments verificados, snapshots, auditoria e rollback.
+          EOF
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release edit "$tag" --title "Dockge Manager $VERSION" --notes "$notes"
+            gh release edit "$tag" --title "Dockge Manager $VERSION" --notes-file /tmp/dockge-manager-release.md
           else
-            gh release create "$tag" --target "$GITHUB_SHA" --title "Dockge Manager $VERSION" --notes "$notes"
+            gh release create "$tag" --target "$GITHUB_SHA" --title "Dockge Manager $VERSION" --notes-file /tmp/dockge-manager-release.md
           fi
+          gh release view "$tag" --json tagName --jq '.tagName' | grep -Fxq "$tag"
