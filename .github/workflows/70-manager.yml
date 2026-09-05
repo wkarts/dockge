@@ -65,14 +65,56 @@ jobs:
       - name: Build image smoke test
         run: docker build -f dockge-manager/Dockerfile dockge-manager -t dockge-manager:test
 
-  image:
+  image-platform:
     if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     needs: validate
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+            suffix: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            suffix: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Resolve metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "version=$(tr -d '[:space:]' < dockge-manager/VERSION)" >> "$GITHUB_OUTPUT"
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish native ${{ matrix.platform }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: dockge-manager
+          file: dockge-manager/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ghcr.io/${{ steps.meta.outputs.owner }}/dockge-manager:${{ steps.meta.outputs.version }}-${{ matrix.suffix }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha,scope=dockge-manager-${{ matrix.suffix }}
+          cache-to: type=gha,mode=max,scope=dockge-manager-${{ matrix.suffix }}
+
+  publish:
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    needs: image-platform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - name: Resolve metadata
         id: meta
@@ -87,19 +129,26 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish Manager image
-        uses: docker/build-push-action@v6
-        with:
-          context: dockge-manager
-          file: dockge-manager/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ghcr.io/${{ steps.meta.outputs.owner }}/dockge-manager:${{ steps.meta.outputs.version }}
-            ghcr.io/${{ steps.meta.outputs.owner }}/dockge-manager:latest
-            ghcr.io/${{ steps.meta.outputs.owner }}/dockge-manager:sha-${{ steps.meta.outputs.short_sha }}
-          provenance: true
-          sbom: true
+      - name: Publish canonical multiarch manifest
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          IMAGE_OWNER: ${{ steps.meta.outputs.owner }}
+          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$IMAGE_OWNER/dockge-manager"
+          docker buildx imagetools create \
+            --tag "$image:$VERSION" \
+            --tag "$image:latest" \
+            --tag "$image:sha-$SHORT_SHA" \
+            "$image:$VERSION-amd64" \
+            "$image:$VERSION-arm64"
+
+          inspect="$(docker buildx imagetools inspect "$image:$VERSION")"
+          printf '%s\n' "$inspect"
+          grep -Fq 'linux/amd64' <<<"$inspect"
+          grep -Fq 'linux/arm64' <<<"$inspect"
       - name: Publish independent Manager release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -116,7 +165,7 @@ jobs:
           Imagem multiarch:
           ghcr.io/$IMAGE_OWNER/dockge-manager:$VERSION
 
-          Management plane independente do Dockge Core, com FastAPI, PostgreSQL/Alembic, Vue PWA, múltiplos Dockge Targets, deployments verificados, snapshots, auditoria e rollback.
+          Management plane independente do Dockge Core, com FastAPI, PostgreSQL/Alembic, Vue PWA, múltiplos Dockge Targets, deployments verificados, reconciliação por Idempotency-Key, snapshots, auditoria e rollback seguro.
           EOF
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release edit "$tag" --title "Dockge Manager $VERSION" --notes-file /tmp/dockge-manager-release.md
