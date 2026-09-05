@@ -123,11 +123,12 @@ func DetectScript(path string) string {
 path=%s
 printf 'path=%%s\n' "$path"
 compose=''
-if [ -f "$path/compose.yaml" ]; then compose="$path/compose.yaml"
-elif [ -f "$path/docker-compose.yaml" ]; then compose="$path/docker-compose.yaml"
-fi
+for candidate in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
+  if [ -f "$path/$candidate" ]; then compose="$path/$candidate"; break; fi
+done
 if [ -n "$compose" ]; then
   printf '%%s\n' 'dockge_installation=found'
+  printf 'compose_file=%%s\n' "$(basename "$compose")"
   cd "$path"
   docker compose config >/dev/null 2>&1 && printf '%%s\n' 'compose_config=valid' || printf '%%s\n' 'compose_config=invalid'
   printf 'images='; docker compose config --images 2>/dev/null | paste -sd ',' - || true
@@ -147,10 +148,12 @@ func InstallScript(path, stacksPath, imageTag string, bindHost string, port int)
 	return fmt.Sprintf(`set -eu
 path=%s
 stacks=%s
-if [ -e "$path/compose.yaml" ] || [ -e "$path/docker-compose.yaml" ]; then
-  echo 'Refusing to overwrite an existing Dockge installation.' >&2
-  exit 40
-fi
+for candidate in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
+  if [ -e "$path/$candidate" ]; then
+    echo "Refusing to overwrite an existing Dockge installation ($candidate)." >&2
+    exit 40
+  fi
+done
 command -v docker >/dev/null 2>&1 || { echo 'Docker Engine is required. Run: dockge-deploy docker install --apply' >&2; exit 41; }
 docker compose version >/dev/null 2>&1 || { echo 'Docker Compose v2 is required. Run: dockge-deploy docker install --apply' >&2; exit 42; }
 mkdir -p "$path/data" "$stacks"
@@ -178,7 +181,7 @@ path=%s
 new_tag=%s
 stamp=%s
 cd "$path"
-[ -f compose.yaml ] || { echo 'compose.yaml not found' >&2; exit 50; }
+[ -f compose.yaml ] || { echo 'compose.yaml not found; use dockge migrate for a legacy/non-canonical Compose filename.' >&2; exit 50; }
 docker compose config >/dev/null
 old_container="$(docker compose ps -q dockge)"
 [ -n "$old_container" ] || { echo 'Dockge container is not running' >&2; exit 51; }
@@ -232,7 +235,7 @@ if [ -f "$backup/source-compose-name.txt" ]; then
   source_name="$(cat "$backup/source-compose-name.txt")"
   [ -f "$backup/source-compose" ] || { echo 'backup source compose not found' >&2; exit 71; }
   docker compose stop dockge >/dev/null 2>&1 || true
-  rm -f "$path/compose.yaml" "$path/docker-compose.yaml"
+  rm -f "$path/compose.yaml" "$path/compose.yml" "$path/docker-compose.yaml" "$path/docker-compose.yml"
   cp -a "$backup/source-compose" "$path/$source_name"
 else
   [ -f "$backup/compose.yaml" ] || { echo 'backup compose.yaml not found' >&2; exit 71; }
@@ -268,16 +271,16 @@ printf 'path=%%s\nstacks_path=%%s\ntarget_image=ghcr.io/wkarts/dockge:%%s\nbind=
 if [ ! -d "$path" ]; then echo 'source=not_found'; exit 0; fi
 cd "$path"
 compose=''
-if [ -f compose.yaml ]; then compose=compose.yaml
-elif [ -f docker-compose.yaml ]; then compose=docker-compose.yaml
-else echo 'source_compose=missing'; exit 0
-fi
+for candidate in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
+  if [ -f "$candidate" ]; then compose="$candidate"; break; fi
+done
+if [ -z "$compose" ]; then echo 'source_compose=missing'; exit 0; fi
 printf 'source_compose=%%s\n' "$compose"
-docker compose config >/dev/null 2>&1 && echo 'compose_config=valid' || echo 'compose_config=invalid'
-printf 'source_images='; docker compose config --images 2>/dev/null | paste -sd ',' - || true
+docker compose -f "$compose" config >/dev/null 2>&1 && echo 'compose_config=valid' || echo 'compose_config=invalid'
+printf 'source_images='; docker compose -f "$compose" config --images 2>/dev/null | paste -sd ',' - || true
 printf 'source_data_bytes='; du -sb "$path/data" 2>/dev/null | awk '{print $1}' || echo 0
 printf 'stack_count='; find "$stacks" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l
-printf 'dockge_container='; docker compose ps -q dockge 2>/dev/null || true
+printf 'dockge_container='; docker compose -f "$compose" ps -q dockge 2>/dev/null || true
 printf '%%s\n' 'read_only=true'
 printf '%%s\n' 'No files, stacks, volumes or containers were changed.'
 `, quote(path), quote(stacksPath), quote(imageTag), quote(bindHost), port)
@@ -293,15 +296,15 @@ stacks=%s
 stamp=%s
 cd "$path"
 source_name=''
-if [ -f compose.yaml ]; then source_name=compose.yaml
-elif [ -f docker-compose.yaml ]; then source_name=docker-compose.yaml
-else echo 'No existing Dockge compose file found.' >&2; exit 80
-fi
-docker compose config >/dev/null
-old_container="$(docker compose ps -q dockge)"
+for candidate in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
+  if [ -f "$candidate" ]; then source_name="$candidate"; break; fi
+done
+[ -n "$source_name" ] || { echo 'No existing Dockge compose file found.' >&2; exit 80; }
+docker compose -f "$source_name" config >/dev/null
+old_container="$(docker compose -f "$source_name" ps -q dockge)"
 [ -n "$old_container" ] || { echo 'Existing Dockge container is not running.' >&2; exit 81; }
 old_image_id="$(docker inspect "$old_container" --format '{{.Image}}')"
-source_images="$(docker compose config --images 2>/dev/null | paste -sd ',' - || true)"
+source_images="$(docker compose -f "$source_name" config --images 2>/dev/null | paste -sd ',' - || true)"
 if printf '%%s' "$source_images" | grep -q 'ghcr.io/wkarts/dockge'; then
   echo 'This installation already uses ghcr.io/wkarts/dockge; use dockge upgrade instead.' >&2
   exit 82
@@ -322,36 +325,39 @@ rollback() {
   rc=$?
   trap - EXIT INT TERM
   echo 'Migration failed; restoring original Dockge installation. Application stacks remain untouched.' >&2
-  docker compose stop dockge >/dev/null 2>&1 || true
-  rm -f "$path/compose.yaml" "$path/docker-compose.yaml"
-  cp -a "$backup/source-compose" "$path/$(cat "$backup/source-compose-name.txt")" || true
+  if [ -f "$backup/source-compose-name.txt" ]; then
+    restore_name="$(cat "$backup/source-compose-name.txt")"
+    docker compose -f "$path/compose.yaml" stop dockge >/dev/null 2>&1 || true
+    rm -f "$path/compose.yaml" "$path/compose.yml" "$path/docker-compose.yaml" "$path/docker-compose.yml"
+    cp -a "$backup/source-compose" "$path/$restore_name" || true
+  fi
   if [ -f "$backup/had-env" ]; then cp -a "$backup/.env" "$path/.env" || true; else rm -f "$path/.env"; fi
   if [ -f "$backup/data.tar.gz" ]; then rm -rf "$path/data"; tar -xzf "$backup/data.tar.gz" -C "$path" || true; fi
   cd "$path"
-  docker compose up -d --no-deps dockge || true
-  docker compose ps dockge || true
+  docker compose -f "$restore_name" up -d --no-deps dockge || true
+  docker compose -f "$restore_name" ps dockge || true
   exit "$rc"
 }
 trap rollback EXIT INT TERM
 
-docker compose stop dockge
+docker compose -f "$source_name" stop dockge
 printf '%%s' %s | base64 -d > "$path/compose.yaml"
 printf '%%s' %s | base64 -d > "$path/.env"
 chmod 600 "$path/.env"
-[ "$source_name" = compose.yaml ] || rm -f "$path/$source_name"
+for candidate in compose.yml docker-compose.yaml docker-compose.yml; do rm -f "$path/$candidate"; done
 mkdir -p "$path/data" "$stacks"
-docker compose config >/dev/null
-docker compose pull dockge
-docker compose up -d --no-deps dockge
+docker compose -f "$path/compose.yaml" config >/dev/null
+docker compose -f "$path/compose.yaml" pull dockge
+docker compose -f "$path/compose.yaml" up -d --no-deps dockge
 sleep 2
-new_container="$(docker compose ps -q dockge)"
+new_container="$(docker compose -f "$path/compose.yaml" ps -q dockge)"
 [ -n "$new_container" ] || { echo 'New Dockge container was not created.' >&2; exit 84; }
 running="$(docker inspect "$new_container" --format '{{.State.Running}}')"
 [ "$running" = true ] || { echo 'New Dockge container is not running.' >&2; exit 85; }
 find "$stacks" -mindepth 1 -maxdepth 1 -type d -printf '%%f\n' 2>/dev/null | sort > "$backup/stacks-after.txt" || true
 cmp -s "$backup/stacks-before.txt" "$backup/stacks-after.txt" || { echo 'Stacks directory set changed during migration; rolling back.' >&2; exit 86; }
 trap - EXIT INT TERM
-printf 'migration=committed backup=%%s source_images=%%s target=ghcr.io/wkarts/dockge:%s\n' "$backup" "$source_images"
+printf 'migration=committed backup=%%s source_compose=%%s source_images=%%s target=ghcr.io/wkarts/dockge:%s\n' "$backup" "$source_name" "$source_images"
 `, quote(path), quote(stacksPath), quote(stamp), quote(compose64), quote(env64), imageTag)
 }
 
