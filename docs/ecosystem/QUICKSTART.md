@@ -15,18 +15,18 @@ O Dockge Core atual permanece o orquestrador. O Manager não acessa Docker diret
 Release estável:
 
 ```text
-https://github.com/wkarts/dockge/releases/tag/dockge-deploy-v1.0.1
+https://github.com/wkarts/dockge/releases/tag/dockge-deploy-v1.0.2
 ```
 
 Escolha o pacote correspondente:
 
 ```text
-Linux x64      dockge-deploy-1.0.1-linux-amd64.tar.gz
-Linux ARM64    dockge-deploy-1.0.1-linux-arm64.tar.gz
-Windows x64    dockge-deploy-1.0.1-windows-amd64.zip
-Windows ARM64  dockge-deploy-1.0.1-windows-arm64.zip
-macOS Intel    dockge-deploy-1.0.1-darwin-amd64.tar.gz
-macOS ARM64    dockge-deploy-1.0.1-darwin-arm64.tar.gz
+Linux x64      dockge-deploy-1.0.2-linux-amd64.tar.gz
+Linux ARM64    dockge-deploy-1.0.2-linux-arm64.tar.gz
+Windows x64    dockge-deploy-1.0.2-windows-amd64.zip
+Windows ARM64  dockge-deploy-1.0.2-windows-arm64.zip
+macOS Intel    dockge-deploy-1.0.2-darwin-amd64.tar.gz
+macOS ARM64    dockge-deploy-1.0.2-darwin-arm64.tar.gz
 ```
 
 Valide o arquivo com `SHA256SUMS.txt` antes do uso.
@@ -142,7 +142,18 @@ dockge-deploy dockge plan-migration \
   --version 1.6.1
 ```
 
-O `plan-migration` é read-only.
+O `plan-migration` é read-only. Na versão 1.0.2 ele também mostra o **bind mount real de `/app/data`**, o `DOCKGE_STACKS_DIR` da instalação em execução, o source do mount de stacks e se o caminho informado em `--stacks-path` coincide com o runtime atual.
+
+Antes de aplicar, confirme que o inventário informa:
+
+```text
+source_data_mount_type=bind
+source_data_mount_source=<caminho real dos dados Dockge>
+source_stacks_mount_type=bind
+stacks_path_match=true
+```
+
+O fluxo automático falha de forma segura quando `/app/data` usa named volume, quando o caminho real das stacks não coincide com o informado, ou quando o mount de stacks não segue o layout bind suportado. Nesses casos, faça uma migração revisada/manual em vez de forçar a automação.
 
 Depois da revisão:
 
@@ -159,19 +170,24 @@ dockge-deploy dockge migrate \
 A migração:
 
 ```text
-inventaria origem
-→ snapshot Compose/.env/data/imagem/lista de stacks
+inventaria origem + mounts reais
+→ snapshot Compose/.env/data real/imagem/lista de stacks
 → para somente o container Dockge
+→ preserva o bind real de /app/data e parâmetros operacionais compatíveis
 → instala a configuração wkarts/dockge
 → pull
 → sobe somente Dockge
-→ verifica container + conjunto de stacks
+→ verifica container + bind de dados + conjunto de stacks
 → commit
 ```
 
-Em falha, restaura a instalação anterior. Não executa `down -v`, não remove volumes das aplicações e não remove `/opt/stacks`.
+Em falha, restaura a instalação anterior e o conteúdo do bind de dados registrado no snapshot. Não executa `down -v`, não remove volumes das aplicações e não remove `/opt/stacks`.
 
 Os quatro nomes Compose padrão `.yaml`/`.yml` são reconhecidos.
+
+### Upgrade de uma instalação já canônica
+
+`dockge upgrade` também detecta o mount real de `/app/data`, grava esse caminho no backup e restaura o conteúdo desse mesmo bind em caso de rollback. O upgrade automático aceita o layout canônico com `/app/data` em bind mount e recusa layouts de named volume sem plano revisado.
 
 ---
 
