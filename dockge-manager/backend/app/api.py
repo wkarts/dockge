@@ -119,6 +119,15 @@ def runtime_snapshot(db: Db, deployment: Deployment, client, revision: int, reas
     return snapshot
 
 
+def current_stack_or_none(client, stack_name: str) -> dict | None:
+    try:
+        return client.stack(stack_name)
+    except DockgeRequestError as exc:
+        if exc.status_code == 404:
+            return None
+        raise
+
+
 def restore_runtime_snapshot(
     db: Db,
     user: CurrentUser,
@@ -127,10 +136,34 @@ def restore_runtime_snapshot(
     client,
     snapshot: DeploymentSnapshot,
 ) -> dict:
+    current = current_stack_or_none(client, deployment.stack_name)
+
     if snapshot.existed:
+        expected_env = secret_box().decrypt(snapshot.compose_env_ciphertext)
+        if current is not None:
+            same_content = (
+                str(current.get("composeYAML") or "") == snapshot.compose_yaml
+                and str(current.get("composeENV") or "") == expected_env
+            )
+            same_management = bool(current.get("api_managed", False)) == snapshot.api_managed
+            if same_content and same_management:
+                settings = get_settings()
+                ps = verify_stack(
+                    client,
+                    deployment.stack_name,
+                    settings.deployment_verify_attempts,
+                    settings.deployment_verify_interval_seconds,
+                )
+                snapshot.restored_at = datetime.now(timezone.utc)
+                return {
+                    "restored": "previous_runtime_already_present",
+                    "ps": ps,
+                    "adoption_persisted": False,
+                }
+
         payload = {
             "compose_yaml": snapshot.compose_yaml,
-            "compose_env": secret_box().decrypt(snapshot.compose_env_ciphertext),
+            "compose_env": expected_env,
             "owner": user.email,
             # If an external stack was explicitly adopted by the failed
             # deployment, the marker now exists. Restoring through the API must
@@ -164,9 +197,20 @@ def restore_runtime_snapshot(
         snapshot.restored_at = datetime.now(timezone.utc)
         return {"restored": "previous_runtime", "ps": ps, "adoption_persisted": not snapshot.api_managed}
 
-    # The failed deployment created a stack that did not exist before. Delete
-    # only that API-managed stack. Dockge's DELETE intentionally does not remove
+    # The failed deployment targeted a stack that did not exist before. If the
+    # idempotent request never reached Dockge, absence is already the desired
+    # state and there is nothing to delete.
+    if current is None:
+        snapshot.restored_at = datetime.now(timezone.utc)
+        return {"restored": "stack_absence_already_present"}
+
+    # Never delete a concurrently-created/external stack merely because a
+    # deployment result was ambiguous. Only a stack carrying the API-managed
+    # marker can be removed automatically, and Dockge DELETE does not remove
     # named volumes.
+    if not bool(current.get("api_managed", False)):
+        raise RuntimeError("refusing_to_delete_non_api_managed_stack_during_rollback")
+
     result = run_mutation(
         db,
         target,
@@ -621,14 +665,17 @@ def execute_revision(db: Db, user: CurrentUser, deployment: Deployment, revision
         if isinstance(exc, DockgeRequestError):
             original_status = exc.status_code
             original_detail = exc.detail
+            may_have_mutated = exc.may_have_mutated
         else:
             original_status = 502
             original_detail = {"error": "deployment_verification_failed", "reason": exc.reason, "ps": exc.payload}
+            may_have_mutated = True
 
         deployment.last_error = str(original_detail)[:4000]
         rollback_result: dict | None = None
         rollback_error: str | None = None
-        if mutated:
+        restore_required = mutated or may_have_mutated
+        if restore_required:
             try:
                 deployment.status = "ROLLING_BACK"
                 db.flush()
@@ -640,8 +687,8 @@ def execute_revision(db: Db, user: CurrentUser, deployment: Deployment, revision
                 rollback_error = str(rollback_exc)
                 deployment.status = "ROLLBACK_FAILED"
         else:
-            # A precondition/API failure before the first successful mutation
-            # must not adopt, delete or otherwise alter the target stack.
+            # Definitive precondition failures and connect-stage failures never
+            # reached a remote mutation, so rollback must not touch the target.
             deployment.status = "FAILED"
 
         audit(
@@ -655,6 +702,8 @@ def execute_revision(db: Db, user: CurrentUser, deployment: Deployment, revision
                 "status": original_status,
                 "snapshot_id": snapshot.id,
                 "mutated": mutated,
+                "may_have_mutated": may_have_mutated,
+                "restore_required": restore_required,
                 "rollback": rollback_result,
                 "rollback_error": rollback_error,
             },

@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     health_poll_seconds: int = 60
     deployment_verify_attempts: int = 8
     deployment_verify_interval_seconds: float = 2.0
+    mutation_retry_attempts: int = 2
+    mutation_retry_delay_seconds: float = 0.35
     static_dir: str = "/app/static"
 
     def validate_runtime_secrets(self) -> None:
@@ -51,6 +53,10 @@ class Settings(BaseSettings):
             raise RuntimeError("DOCKGE_MANAGER_DEPLOYMENT_VERIFY_ATTEMPTS must be between 1 and 60")
         if self.deployment_verify_interval_seconds < 0 or self.deployment_verify_interval_seconds > 30:
             raise RuntimeError("DOCKGE_MANAGER_DEPLOYMENT_VERIFY_INTERVAL_SECONDS must be between 0 and 30")
+        if self.mutation_retry_attempts < 0 or self.mutation_retry_attempts > 5:
+            raise RuntimeError("DOCKGE_MANAGER_MUTATION_RETRY_ATTEMPTS must be between 0 and 5")
+        if self.mutation_retry_delay_seconds < 0 or self.mutation_retry_delay_seconds > 10:
+            raise RuntimeError("DOCKGE_MANAGER_MUTATION_RETRY_DELAY_SECONDS must be between 0 and 10")
 
 
 @lru_cache

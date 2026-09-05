@@ -33,10 +33,13 @@ O Manager **não é um segundo orquestrador**: não monta `docker.sock`, não ac
 - `.env` de revisão criptografado;
 - adoção explícita de stack externa;
 - `Idempotency-Key` por mutação;
+- repetição controlada da **mesma** intenção com a **mesma** `Idempotency-Key` quando há falha de transporte/resultado 5xx potencialmente ambíguo;
+- estado de operação `IN_DOUBT` quando o Core informa `idempotency_result_in_doubt` ou quando uma mutação não pode ser confirmada;
 - snapshot do runtime real antes da execução;
 - distinção entre revisão desejada (`current_revision`) e realmente ativa (`active_revision`);
 - verificação de containers após `up`;
-- rollback automático quando a mutação já ocorreu e a verificação/etapa seguinte falha;
+- rollback automático quando a mutação já ocorreu **ou pode ter ocorrido** e a operação não pôde ser confirmada;
+- reconciliação que evita apagar uma stack externa quando o snapshot anterior era ausência;
 - restauração do Compose + `.env` anterior quando a stack já existia;
 - remoção apenas da stack API-managed recém-criada quando ela não existia antes do deployment;
 - nenhuma remoção automática de volumes;
@@ -50,17 +53,20 @@ DRAFT
   ↓
 SNAPSHOT RUNTIME
   ↓
-APPLY
+APPLY + IDEMPOTENCY
+  ├── resposta perdida ──► RETRY COM A MESMA KEY
+  │                          ├── replay confirmado ──► continua
+  │                          └── IN_DOUBT ───────────► RESTORE SNAPSHOT
   ↓
 UP
   ↓
 VERIFY
   ├── saudável ──► HEALTHY
-  └── falha ─────► RESTORE SNAPSHOT ──► ROLLED_BACK
-                                      └► ROLLBACK_FAILED (se a recuperação falhar)
+  └── falha/ambiguidade ──► RESTORE SNAPSHOT ──► ROLLED_BACK
+                                                └► ROLLBACK_FAILED
 ```
 
-Uma falha de precondição **antes da primeira mutação bem-sucedida** não dispara adoção, remoção ou rollback remoto.
+Falhas definitivas de precondição e falhas de **conexão antes do envio** não disparam adoção, remoção ou rollback remoto. Falhas de leitura/escrita/protocolo depois que a mutação pode ter chegado ao Core são tratadas conservadoramente como resultado incerto.
 
 ## PWA
 
@@ -144,16 +150,20 @@ DOCKGE_MANAGER_ALLOW_HTTP_TARGETS=true
 
 Redirects HTTP vindos do endpoint Dockge não são seguidos automaticamente.
 
-## Política de verificação
+## Política de verificação e reconciliação
 
 Defaults:
 
 ```text
 DOCKGE_MANAGER_DEPLOYMENT_VERIFY_ATTEMPTS=8
 DOCKGE_MANAGER_DEPLOYMENT_VERIFY_INTERVAL_SECONDS=2
+DOCKGE_MANAGER_MUTATION_RETRY_ATTEMPTS=2
+DOCKGE_MANAGER_MUTATION_RETRY_DELAY_SECONDS=0.35
 ```
 
 Uma stack é considerada saudável quando existe pelo menos um container e todos os containers retornados pelo `docker compose ps` estão `running`; quando healthcheck está presente, ele deve estar `healthy`.
+
+Os retries de mutação **não criam uma nova intenção**: reutilizam a `Idempotency-Key` original. Isso permite recuperar respostas perdidas sem duplicar `apply`, `up`, `restart`, `delete` ou outra ação suportada. Se o Core responder `idempotency_result_in_doubt`, a operação fica registrada como `IN_DOUBT` e o deployment tenta reconciliar o runtime com o snapshot capturado antes da mutação.
 
 ## Persistência
 
@@ -215,8 +225,9 @@ A imagem é independente de `ghcr.io/wkarts/dockge` e não altera o SemVer do Do
 - token Dockge criptografado;
 - Compose env criptografado;
 - JWT expirável;
-- operações mutantes idempotentes;
-- ações e falhas auditadas;
+- operações mutantes idempotentes e reconciliáveis por chave;
+- ações, retries, estados incertos e falhas auditados;
 - `delete` de Target remove somente cadastro/credencial do Manager;
 - rollback de deployment nunca solicita remoção de volumes;
+- rollback automático recusa apagar uma stack que esteja presente sem marcador API-managed quando o snapshot anterior era ausência;
 - Native Agents do Dockge não são usados nem alterados pelo Manager.

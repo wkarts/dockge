@@ -229,7 +229,7 @@ dockge-deploy dockge manager-token \
 A imagem estável é:
 
 ```text
-ghcr.io/wkarts/dockge-manager:1.0.0
+ghcr.io/wkarts/dockge-manager:1.0.1
 ```
 
 Prepare o diretório:
@@ -255,7 +255,7 @@ PY
 Preencha `.env` e fixe a imagem:
 
 ```text
-DOCKGE_MANAGER_TAG=1.0.0
+DOCKGE_MANAGER_TAG=1.0.1
 ```
 
 Suba:
@@ -321,22 +321,26 @@ Execução interna:
 
 ```text
 SNAPSHOT do runtime atual
-→ APPLY pela Dockge Automation API
+→ APPLY pela Dockge Automation API + Idempotency-Key
+→ se a resposta se perder: retry com a MESMA chave
 → UP
 → VERIFY containers/health
 → HEALTHY
 ```
 
-Se houver falha depois da primeira mutação:
+Se uma mutação falhar depois de ter sido aplicada **ou se o resultado permanecer incerto**:
 
 ```text
 ROLLING_BACK
-→ restaura snapshot anterior
+→ reconcilia o estado real com o snapshot anterior
+→ restaura somente quando necessário
 → verifica novamente
 → ROLLED_BACK
 ```
 
-Se a stack não existia antes, a recuperação remove somente a stack recém-criada API-managed e não remove named volumes.
+Quando o Core responder `idempotency_result_in_doubt`, a operação fica registrada como `IN_DOUBT`. O Manager não cria uma segunda intenção com outra chave para “tentar de novo”.
+
+Se a stack não existia antes, a recuperação só remove uma stack que agora exista e esteja marcada como API-managed. Uma stack externa sem esse marcador nunca é apagada automaticamente, e named volumes não são removidos.
 
 ---
 
