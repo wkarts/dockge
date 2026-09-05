@@ -171,7 +171,7 @@ running="$(docker inspect "$(docker compose ps -q dockge)" --format '{{.State.Ru
 }
 
 func UpgradePlan(path, imageTag string) string {
-	return fmt.Sprintf("PLAN: validate %s, detect and snapshot the real /app/data bind mount, preserve the current image locally, set DOCKGE_IMAGE_TAG=%s, pull, recreate only Dockge, verify, and rollback automatically on failure; application stacks/volumes remain untouched", path, imageTag)
+	return fmt.Sprintf("PLAN: validate %s, pre-pull Dockge %s while the current instance remains online, quiesce only the Dockge container, snapshot the real /app/data bind mount consistently, recreate only Dockge, verify, and rollback automatically on failure; application stacks/volumes remain untouched", path, imageTag)
 }
 
 func UpgradeScript(path, imageTag string) string {
@@ -201,11 +201,17 @@ cp -a compose.yaml "$backup/compose.yaml"
 printf '%%s\n' "$old_image_id" > "$backup/old-image-id.txt"
 printf '%%s\n' "$data_mount_type" > "$backup/data-mount-type.txt"
 printf '%%s\n' "$data_mount_source" > "$backup/data-mount-source.txt"
-tar -C "$data_mount_source" -czf "$backup/data.tar.gz" .
+
+# Fetch the target image before the maintenance window. Shell environment has
+# precedence over .env interpolation, so the running configuration is not
+# changed yet and application stacks remain untouched.
+DOCKGE_IMAGE_TAG="$new_tag" docker compose pull dockge
+
 rollback() {
   rc=$?
   trap - EXIT INT TERM
   echo 'Upgrade failed; rolling back Dockge container only.' >&2
+  docker compose stop dockge >/dev/null 2>&1 || true
   cp -a "$backup/compose.yaml" "$path/compose.yaml" || true
   if [ -f "$backup/had-env" ]; then cp -a "$backup/.env" "$path/.env" || true; else rm -f "$path/.env"; fi
   if [ -f "$backup/data.tar.gz" ]; then
@@ -217,18 +223,32 @@ rollback() {
   exit "$rc"
 }
 trap rollback EXIT INT TERM
+
+# Quiesce Dockge before copying persistent data. This matters for SQLite and
+# other files that must not change while the archive is being produced.
+docker compose stop dockge
+old_running="$(docker inspect "$old_container" --format '{{.State.Running}}')"
+[ "$old_running" = false ] || { echo 'Dockge did not quiesce before the data snapshot.' >&2; exit 57; }
+printf 'quiesced=true\n' > "$backup/snapshot-state.txt"
+tar -C "$data_mount_source" -czf "$backup/data.tar.gz.partial" .
+mv "$backup/data.tar.gz.partial" "$backup/data.tar.gz"
+printf 'snapshot=consistent\n' >> "$backup/snapshot-state.txt"
+
 if [ -f .env ] && grep -q '^DOCKGE_IMAGE_TAG=' .env; then
   sed -i "s|^DOCKGE_IMAGE_TAG=.*$|DOCKGE_IMAGE_TAG=$new_tag|" .env
 else
   printf 'DOCKGE_IMAGE_TAG=%%s\n' "$new_tag" >> .env
 fi
 docker compose config >/dev/null
-docker compose pull dockge
 docker compose up -d --no-deps dockge
 sleep 2
 docker compose ps dockge
-running="$(docker inspect "$(docker compose ps -q dockge)" --format '{{.State.Running}}')"
+new_container="$(docker compose ps -q dockge)"
+[ -n "$new_container" ] || { echo 'Dockge container was not created after upgrade.' >&2; exit 58; }
+running="$(docker inspect "$new_container" --format '{{.State.Running}}')"
 [ "$running" = true ] || { echo 'Dockge container is not running after upgrade.' >&2; exit 52; }
+new_data_source="$(docker inspect "$new_container" --format '{{range .Mounts}}{{.Type}}{{printf "\t"}}{{.Source}}{{printf "\t"}}{{.Destination}}{{println}}{{end}}' | awk -F '\t' '$3=="/app/data" {print $2; exit}')"
+[ "$new_data_source" = "$data_mount_source" ] || { echo "Dockge data mount changed from $data_mount_source to $new_data_source; rolling back." >&2; exit 59; }
 trap - EXIT INT TERM
 printf 'upgrade=committed backup=%%s data_mount=%%s rollback_image=ghcr.io/wkarts/dockge:%%s\n' "$backup" "$data_mount_source" "$rollback_tag"
 `, quote(path), quote(imageTag), quote(stamp))
@@ -242,15 +262,29 @@ backup=%s
 stamp=%s
 cd "$path"
 [ -d "$backup" ] || { echo 'backup directory not found' >&2; exit 70; }
+
+# Best effort quiesce of the currently installed Dockge must happen before a
+# persistent-data restore. Application stacks are separate Compose projects
+# and are intentionally not stopped.
+current_compose=''
+for candidate in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
+  if [ -f "$path/$candidate" ]; then current_compose="$path/$candidate"; break; fi
+done
+if [ -n "$current_compose" ]; then
+  docker compose -f "$current_compose" stop dockge >/dev/null 2>&1 || true
+fi
+
+restored_compose=''
 if [ -f "$backup/source-compose-name.txt" ]; then
   source_name="$(cat "$backup/source-compose-name.txt")"
   [ -f "$backup/source-compose" ] || { echo 'backup source compose not found' >&2; exit 71; }
-  docker compose stop dockge >/dev/null 2>&1 || true
   rm -f "$path/compose.yaml" "$path/compose.yml" "$path/docker-compose.yaml" "$path/docker-compose.yml"
   cp -a "$backup/source-compose" "$path/$source_name"
+  restored_compose="$path/$source_name"
 else
   [ -f "$backup/compose.yaml" ] || { echo 'backup compose.yaml not found' >&2; exit 71; }
   cp -a "$backup/compose.yaml" "$path/compose.yaml"
+  restored_compose="$path/compose.yaml"
 fi
 if [ -f "$backup/had-env" ]; then cp -a "$backup/.env" "$path/.env"; else rm -f "$path/.env"; fi
 data_restore_path="$path/data"
@@ -267,17 +301,17 @@ if [ -f "$backup/old-image-id.txt" ]; then
   docker image inspect "$old_image_id" >/dev/null
   docker image tag "$old_image_id" "ghcr.io/wkarts/dockge:$rollback_tag" || true
 fi
-docker compose config >/dev/null
-docker compose up -d --no-deps dockge
-docker compose ps dockge
-running="$(docker inspect "$(docker compose ps -q dockge)" --format '{{.State.Running}}')"
+docker compose -f "$restored_compose" config >/dev/null
+docker compose -f "$restored_compose" up -d --no-deps dockge
+docker compose -f "$restored_compose" ps dockge
+running="$(docker inspect "$(docker compose -f "$restored_compose" ps -q dockge)" --format '{{.State.Running}}')"
 [ "$running" = true ] || { echo 'Dockge container is not running after rollback.' >&2; exit 72; }
 printf 'rollback=committed backup=%%s data_restore_path=%%s\n' "$backup" "$data_restore_path"
 `, quote(path), quote(backup), quote(stamp))
 }
 
 func MigrationPlan(path, stacksPath, imageTag, bindHost string, port int) string {
-	return fmt.Sprintf("PLAN: inspect existing Dockge at %s, verify the real /app/data and stacks bind mounts, preserve stacks at %s, snapshot compose/.env/data and current image, stop/recreate only Dockge using ghcr.io/wkarts/dockge:%s bound to %s:%d, verify, and restore the original installation automatically on failure. Re-run with --apply only after reviewing dockge plan-migration output.", path, stacksPath, imageTag, bindHost, port)
+	return fmt.Sprintf("PLAN: inspect existing Dockge at %s, verify the real /app/data and stacks bind mounts, pre-pull ghcr.io/wkarts/dockge:%s while the source remains online, then quiesce only Dockge and snapshot its persistent data consistently; preserve stacks at %s, recreate only Dockge bound to %s:%d, verify, and restore the original installation automatically on failure. Re-run with --apply only after reviewing dockge plan-migration output.", path, imageTag, stacksPath, bindHost, port)
 }
 
 func MigrationPlanScript(path, stacksPath, imageTag, bindHost string, port int) string {
@@ -308,11 +342,13 @@ if [ -n "$old_container" ]; then
   printf 'source_stacks_dir=%%s\nsource_stacks_mount_type=%%s\nsource_stacks_mount_source=%%s\n' "$source_stacks_dir" "$stacks_mount_type" "$stacks_mount_source"
   if [ "$source_stacks_dir" = "$stacks" ] && [ "$stacks_mount_source" = "$stacks" ]; then echo 'stacks_path_match=true'; else echo 'stacks_path_match=false'; fi
   printf 'source_data_bytes='; du -sb "$data_mount_source" 2>/dev/null | awk '{print $1}' || echo 0
+  echo 'snapshot_strategy=quiesce-dockge-before-archive'
 else
   echo 'source_data_mount_type=unknown'
   echo 'source_data_mount_source=unknown'
   echo 'source_stacks_dir=unknown'
   echo 'stacks_path_match=unknown'
+  echo 'snapshot_strategy=unavailable-until-dockge-is-running'
 fi
 printf 'stack_count='; find "$stacks" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l
 printf '%%s\n' 'read_only=true'
@@ -327,6 +363,7 @@ func MigrationScript(path, stacksPath, imageTag, bindHost string, port int) stri
 	return fmt.Sprintf(`set -eu
 path=%s
 stacks=%s
+target_tag=%s
 stamp=%s
 cd "$path"
 source_name=''
@@ -369,19 +406,25 @@ printf '%%s\n' "$data_mount_source" > "$backup/data-mount-source.txt"
 printf '%%s\n' "$source_stacks_dir" > "$backup/stacks-dir.txt"
 printf '%%s\n' "$stacks_mount_source" > "$backup/stacks-mount-source.txt"
 find "$stacks" -mindepth 1 -maxdepth 1 -type d -printf '%%f\n' 2>/dev/null | sort > "$backup/stacks-before.txt" || true
-tar -C "$data_mount_source" -czf "$backup/data.tar.gz" .
 rollback_tag="migration-rollback-$stamp"
 docker image tag "$old_image_id" "ghcr.io/wkarts/dockge:$rollback_tag" || true
+
+# Pull target before quiescing the old UI/API to keep the maintenance window as
+# short as possible.
+docker pull "ghcr.io/wkarts/dockge:$target_tag"
+
 rollback() {
   rc=$?
   trap - EXIT INT TERM
   echo 'Migration failed; restoring original Dockge installation. Application stacks remain untouched.' >&2
-  if [ -f "$backup/source-compose-name.txt" ]; then
-    restore_name="$(cat "$backup/source-compose-name.txt")"
+  if [ -f "$path/compose.yaml" ]; then
     docker compose -f "$path/compose.yaml" stop dockge >/dev/null 2>&1 || true
-    rm -f "$path/compose.yaml" "$path/compose.yml" "$path/docker-compose.yaml" "$path/docker-compose.yml"
-    cp -a "$backup/source-compose" "$path/$restore_name" || true
+  else
+    docker compose -f "$source_name" stop dockge >/dev/null 2>&1 || true
   fi
+  restore_name="$(cat "$backup/source-compose-name.txt")"
+  rm -f "$path/compose.yaml" "$path/compose.yml" "$path/docker-compose.yaml" "$path/docker-compose.yml"
+  cp -a "$backup/source-compose" "$path/$restore_name" || true
   if [ -f "$backup/had-env" ]; then cp -a "$backup/.env" "$path/.env" || true; else rm -f "$path/.env"; fi
   if [ -f "$backup/data.tar.gz" ]; then
     find "$data_mount_source" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || true
@@ -408,7 +451,16 @@ set_env_value() {
   mv "$tmp" "$path/.env"
 }
 
+# Stop only Dockge, verify the old process is quiesced, then archive the real
+# persistent bind atomically. Application containers keep running throughout.
 docker compose -f "$source_name" stop dockge
+old_running="$(docker inspect "$old_container" --format '{{.State.Running}}')"
+[ "$old_running" = false ] || { echo 'Source Dockge did not quiesce before the data snapshot.' >&2; exit 96; }
+printf 'quiesced=true\n' > "$backup/snapshot-state.txt"
+tar -C "$data_mount_source" -czf "$backup/data.tar.gz.partial" .
+mv "$backup/data.tar.gz.partial" "$backup/data.tar.gz"
+printf 'snapshot=consistent\n' >> "$backup/snapshot-state.txt"
+
 printf '%%s' %s | base64 -d > "$path/compose.yaml"
 printf '%%s' %s | base64 -d > "$path/.env"
 set_env_value DOCKGE_DATA_PATH "$data_mount_source"
@@ -420,6 +472,8 @@ chmod 600 "$path/.env"
 for candidate in compose.yml docker-compose.yaml docker-compose.yml; do rm -f "$path/$candidate"; done
 mkdir -p "$data_mount_source" "$stacks"
 docker compose -f "$path/compose.yaml" config >/dev/null
+# The image was pre-pulled before quiescing, but Compose pull is cheap when
+# already present and validates the exact canonical reference.
 docker compose -f "$path/compose.yaml" pull dockge
 docker compose -f "$path/compose.yaml" up -d --no-deps dockge
 sleep 2
@@ -432,8 +486,8 @@ new_data_source="$(docker inspect "$new_container" --format '{{range .Mounts}}{{
 find "$stacks" -mindepth 1 -maxdepth 1 -type d -printf '%%f\n' 2>/dev/null | sort > "$backup/stacks-after.txt" || true
 cmp -s "$backup/stacks-before.txt" "$backup/stacks-after.txt" || { echo 'Stacks directory set changed during migration; rolling back.' >&2; exit 86; }
 trap - EXIT INT TERM
-printf 'migration=committed backup=%%s source_compose=%%s source_images=%%s data_mount=%%s target=ghcr.io/wkarts/dockge:%s\n' "$backup" "$source_name" "$source_images" "$data_mount_source"
-`, quote(path), quote(stacksPath), quote(stamp), quote(compose64), quote(env64), imageTag)
+printf 'migration=committed backup=%%s source_compose=%%s source_images=%%s data_mount=%%s target=ghcr.io/wkarts/dockge:%%s\n' "$backup" "$source_name" "$source_images" "$data_mount_source" "$target_tag"
+`, quote(path), quote(stacksPath), quote(imageTag), quote(stamp), quote(compose64), quote(env64))
 }
 
 func ManagerTokenScript(path, name, prefixes string, replace bool) string {
