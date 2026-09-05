@@ -133,8 +133,24 @@ class DeploymentOut(BaseModel):
     stack_name: str
     status: str
     current_revision: int
+    active_revision: int
+    last_error: str
+    last_deployed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DeploymentSnapshotOut(BaseModel):
+    id: str
+    deployment_id: str
+    captured_for_revision: int
+    existed: bool
+    api_managed: bool
+    reason: str
+    restored_at: datetime | None
+    created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
