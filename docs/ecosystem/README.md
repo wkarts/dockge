@@ -1,7 +1,7 @@
 # Dockge Ecosystem Blueprint 1.0
 
-**Data:** 2026-09-04  
-**Estado:** arquitetura de referência aprovada para início de implementação.
+**Arquitetura aprovada:** 2026-09-04  
+**Estado atual:** Dockge Manager 1.0.0 e Dockge Deploy 1.0.x implementados e distribuídos independentemente do Dockge Core.
 
 Este documento fixa a separação entre:
 
@@ -36,10 +36,19 @@ Agents internos  ← Dockge Core / preservados
 - produtos de negócio não entram no Core dos novos componentes;
 - Dockge, Manager e Deploy têm versões e ciclos de vida independentes.
 
+## Começar agora
+
+Para instalação nova, migração de um Dockge existente, geração da credencial do Manager e primeiro deployment, use:
+
+- [`QUICKSTART.md`](QUICKSTART.md)
+
 ## Documentos
 
+- `QUICKSTART.md`
 - `DOCKGE-MANAGER.md`
 - `DOCKGE-DEPLOY.md`
 - `BOUNDARIES-AND-CONTRACTS.md`
 - `LEGACY-AGENT-RETIREMENT.md`
+- `IMPLEMENTATION-STATUS.md`
 - `ROADMAP.md`
+- `DECISIONS.md`
