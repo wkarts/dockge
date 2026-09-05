@@ -29,12 +29,34 @@ func TestDetectSupportsAllStandardComposeFilenames(t *testing.T) {
 	}
 }
 
-func TestUpgradeScriptContainsRollback(t *testing.T) {
+func TestUpgradeScriptSnapshotsRealDataBindMount(t *testing.T) {
 	script := UpgradeScript("/opt/dockge", "1.6.1")
-	required := []string{"rollback()", "docker image tag", "trap rollback", "docker compose up -d --no-deps dockge", "data.tar.gz"}
+	required := []string{
+		"rollback()",
+		"docker image tag",
+		"trap rollback",
+		"docker compose up -d --no-deps dockge",
+		"data.tar.gz",
+		"data-mount-source.txt",
+		"/app/data",
+		"data_mount_type",
+		"find \"$data_mount_source\" -mindepth 1 -maxdepth 1",
+	}
 	for _, value := range required {
 		if !strings.Contains(script, value) {
 			t.Fatalf("upgrade script missing %q", value)
+		}
+	}
+	if !strings.Contains(script, "requires /app/data to be a bind mount") {
+		t.Fatal("upgrade must fail closed for unsupported data-volume layouts")
+	}
+}
+
+func TestRollbackUsesRecordedDataMountSource(t *testing.T) {
+	script := RollbackScript("/opt/dockge", "/opt/dockge/backups/upgrade-test")
+	for _, value := range []string{"data-mount-source.txt", "data_restore_path", "find \"$data_restore_path\"", "data.tar.gz"} {
+		if !strings.Contains(script, value) {
+			t.Fatalf("rollback script missing %q", value)
 		}
 	}
 }
@@ -48,7 +70,7 @@ func TestDockerInstallSupportsMajorLinuxFamilies(t *testing.T) {
 	}
 }
 
-func TestMigrationPreservesStacksAndRollsBack(t *testing.T) {
+func TestMigrationPreservesRuntimeMountsStacksAndRollsBack(t *testing.T) {
 	script := MigrationScript("/opt/dockge", "/opt/stacks", "1.6.1", "127.0.0.1", 5001)
 	required := []string{
 		"stacks-before.txt",
@@ -57,6 +79,14 @@ func TestMigrationPreservesStacksAndRollsBack(t *testing.T) {
 		"trap rollback",
 		"source-compose",
 		"data.tar.gz",
+		"data-mount-source.txt",
+		"stacks-mount-source.txt",
+		"source_stacks_dir",
+		"stacks_mount_source",
+		"set_env_value DOCKGE_DATA_PATH \"$data_mount_source\"",
+		"DOCKGE_ALLOW_DISABLE_AUTH",
+		"DOCKGE_TOTP_ISSUER",
+		"new_data_source",
 		"docker compose -f \"$source_name\" stop dockge",
 		"docker compose -f \"$path/compose.yaml\" up -d --no-deps dockge",
 		"ghcr.io/wkarts/dockge",
@@ -78,15 +108,17 @@ func TestMigrationPreservesStacksAndRollsBack(t *testing.T) {
 	}
 }
 
-func TestMigrationPlanIsReadOnlyAndSupportsComposeVariants(t *testing.T) {
+func TestMigrationPlanIsReadOnlyAndInventoriesRuntimeMounts(t *testing.T) {
 	script := MigrationPlanScript("/opt/dockge", "/opt/stacks", "1.6.1", "127.0.0.1", 5001)
 	for _, filename := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
 		if !strings.Contains(script, filename) {
 			t.Fatalf("migration plan missing %q", filename)
 		}
 	}
-	if !strings.Contains(script, "read_only=true") {
-		t.Fatal("migration plan must declare read_only=true")
+	for _, value := range []string{"read_only=true", "source_data_mount_type", "source_data_mount_source", "source_stacks_mount_source", "stacks_path_match"} {
+		if !strings.Contains(script, value) {
+			t.Fatalf("migration plan missing %q", value)
+		}
 	}
 	for _, forbidden := range []string{"docker compose stop", "docker compose up", "docker compose pull", "rm -f"} {
 		if strings.Contains(script, forbidden) {
