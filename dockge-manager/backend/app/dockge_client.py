@@ -49,7 +49,11 @@ class DockgeClient:
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
         try:
-            with httpx.Client(timeout=httpx.Timeout(45.0), verify=self.verify_tls) as client:
+            with httpx.Client(
+                timeout=httpx.Timeout(45.0),
+                verify=self.verify_tls,
+                follow_redirects=False,
+            ) as client:
                 response = client.request(
                     method,
                     self.api_base + path,
@@ -60,6 +64,8 @@ class DockgeClient:
         except httpx.HTTPError as exc:
             raise DockgeRequestError(503, {"error": "dockge_unreachable", "message": str(exc)}) from exc
 
+        if 300 <= response.status_code < 400:
+            raise DockgeRequestError(response.status_code, {"error": "dockge_redirect_blocked"})
         try:
             payload: Any = response.json()
         except ValueError:
@@ -88,6 +94,9 @@ class DockgeClient:
 
     def apply_stack(self, name: str, body: dict, idempotency_key: str) -> dict:
         return self._request("PUT", f"/stacks/{name}", json=body, idempotency_key=idempotency_key)
+
+    def delete_stack(self, name: str, idempotency_key: str) -> dict:
+        return self._request("DELETE", f"/stacks/{name}", idempotency_key=idempotency_key)
 
     def action(self, name: str, action: str, idempotency_key: str) -> dict:
         return self._request("POST", f"/stacks/{name}/actions/{action}", json={}, idempotency_key=idempotency_key)
