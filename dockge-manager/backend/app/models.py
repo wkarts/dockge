@@ -100,6 +100,9 @@ class Deployment(Base):
     stack_name: Mapped[str] = mapped_column(String(128), index=True)
     status: Mapped[str] = mapped_column(String(32), default="DRAFT")
     current_revision: Mapped[int] = mapped_column(Integer, default=0)
+    active_revision: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str] = mapped_column(Text, default="")
+    last_deployed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 
@@ -109,6 +112,11 @@ class Deployment(Base):
         back_populates="deployment",
         cascade="all, delete-orphan",
         order_by="DeploymentRevision.revision",
+    )
+    snapshots: Mapped[list[DeploymentSnapshot]] = relationship(
+        back_populates="deployment",
+        cascade="all, delete-orphan",
+        order_by="DeploymentSnapshot.created_at",
     )
 
 
@@ -125,6 +133,23 @@ class DeploymentRevision(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
     deployment: Mapped[Deployment] = relationship(back_populates="revisions")
+
+
+class DeploymentSnapshot(Base):
+    __tablename__ = "deployment_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    deployment_id: Mapped[str] = mapped_column(ForeignKey("deployments.id", ondelete="CASCADE"), index=True)
+    captured_for_revision: Mapped[int] = mapped_column(Integer)
+    existed: Mapped[bool] = mapped_column(Boolean, default=False)
+    api_managed: Mapped[bool] = mapped_column(Boolean, default=False)
+    compose_yaml: Mapped[str] = mapped_column(Text, default="")
+    compose_env_ciphertext: Mapped[str] = mapped_column(Text, default="")
+    reason: Mapped[str] = mapped_column(String(64), default="pre-deploy")
+    restored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
+
+    deployment: Mapped[Deployment] = relationship(back_populates="snapshots")
 
 
 class Operation(Base):
